@@ -8,17 +8,20 @@
     "pnpm": ">=10.0.0"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r typecheck",
     "test": "vitest run",
     "test:phase0": "vitest run tests/phase0",
     "test:contracts": "vitest run tests/phase0/governance-and-boundaries.contract.test.ts tests/phase0/shared-contracts.contract.test.ts",
     "format:check": "prettier --check .",
-    "verify": "pnpm typecheck && pnpm test"
+    "verify": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
+    "@types/node": "^22.13.0",
     "eslint": "^9.20.0",
     "prettier": "^3.5.0",
     "typescript": "^5.8.0",
+    "typescript-eslint": "^8.24.0",
     "vitest": "^3.0.0"
   }
 }
