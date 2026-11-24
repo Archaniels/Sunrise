@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { exposeSunriseApi } from './expose-api.js';
+import { exposePhase1SunriseApi } from './expose-api.js';
 
-exposeSunriseApi(contextBridge, (channel: string, payload?: unknown) =>
+exposePhase1SunriseApi(contextBridge, (channel: string, payload?: unknown) =>
   ipcRenderer.invoke(channel, payload),
 );

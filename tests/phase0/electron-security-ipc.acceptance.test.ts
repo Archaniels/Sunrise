@@ -32,7 +32,9 @@ interface IpcRouterServices {
   readonly getAppVersion: () => Promise<Result<AppVersion>>;
   readonly checkHealth: () => Promise<Result<HealthResponse>>;
   readonly getWindowState: () => Promise<Result<WindowState>>;
-  readonly openExternal: (url: string) => Promise<Result<{ readonly opened: true; readonly url: string }>>;
+  readonly openExternal: (
+    url: string,
+  ) => Promise<Result<{ readonly opened: true; readonly url: string }>>;
 }
 
 interface IpcRouterModule {
@@ -110,10 +112,9 @@ describe('Phase 0.3 Electron security baseline and typed IPC acceptance', () => 
 
   it('validates IPC payloads with Zod and blocks dangerous URLs before calling services', async () => {
     const routerPath = join(REPO_ROOT, 'apps/desktop/src/main/controllers/ipc-router.ts');
-    expect(
-      existsSync(routerPath),
-      'Missing apps/desktop/src/main/controllers/ipc-router.ts',
-    ).toBe(true);
+    expect(existsSync(routerPath), 'Missing apps/desktop/src/main/controllers/ipc-router.ts').toBe(
+      true,
+    );
 
     const loaded: unknown = await import(pathToFileURL(routerPath).href);
     expect(isIpcRouterModule(loaded)).toBe(true);

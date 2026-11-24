@@ -185,7 +185,10 @@ export const ProjectFileNodeSchema = z.object({
   mimeType: z.string().min(1).max(160),
   sizeBytes: z.number().int().min(0).max(MAX_UPLOAD_BYTES),
   s3Key: z.string().min(1).max(512).nullable(),
-  checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  checksumSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
   version: z.number().int().min(1),
   createdBy: UuidSchema,
   createdAt: z.string().datetime(),
@@ -209,7 +212,10 @@ export const UploadFileInputSchema = z.object({
   fileName: SafeFileNameSchema,
   mimeType: z.string().min(1).max(160).optional(),
   sizeBytes: z.number().int().min(0).max(MAX_UPLOAD_BYTES),
-  contentBase64: z.string().max(Math.ceil((MAX_UPLOAD_BYTES * 4) / 3) + 4).optional(),
+  contentBase64: z
+    .string()
+    .max(Math.ceil((MAX_UPLOAD_BYTES * 4) / 3) + 4)
+    .optional(),
 });
 
 export type UploadFileInput = z.infer<typeof UploadFileInputSchema>;
@@ -299,7 +305,10 @@ export type FilePreviewResponse = z.infer<typeof FilePreviewResponseSchema>;
 
 export const PickLocalFilesInputSchema = z.object({
   multiple: z.boolean().default(true),
-  allowedExtensions: z.array(z.string().regex(/^[a-zA-Z0-9]{1,16}$/)).max(32).optional(),
+  allowedExtensions: z
+    .array(z.string().regex(/^[a-zA-Z0-9]{1,16}$/))
+    .max(32)
+    .optional(),
 });
 
 export type PickLocalFilesInput = z.infer<typeof PickLocalFilesInputSchema>;
@@ -322,7 +331,10 @@ export type PickLocalFilesOutput = z.infer<typeof PickLocalFilesOutputSchema>;
 
 export const SaveLocalFileInputSchema = z.object({
   suggestedName: SafeFileNameSchema,
-  contentBase64: z.string().min(1).max(Math.ceil((MAX_UPLOAD_BYTES * 4) / 3) + 4),
+  contentBase64: z
+    .string()
+    .min(1)
+    .max(Math.ceil((MAX_UPLOAD_BYTES * 4) / 3) + 4),
 });
 
 export type SaveLocalFileInput = z.infer<typeof SaveLocalFileInputSchema>;

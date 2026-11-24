@@ -32,11 +32,7 @@ import {
   type WorkspaceLayoutState,
 } from '../workspace/contracts.js';
 import { IPC_CHANNELS } from './channels.js';
-import {
-  EmptyInputSchema,
-  IpcChannelContracts,
-  type SunrisePreloadApi,
-} from './contracts.js';
+import { EmptyInputSchema, IpcChannelContracts, type SunrisePreloadApi } from './contracts.js';
 
 export const PHASE1_IPC_CHANNELS = {
   ...IPC_CHANNELS,
@@ -54,8 +50,7 @@ export const PHASE1_IPC_CHANNELS = {
   CACHE_CLEAR_DRAFT: 'cache:clearDraft',
 } as const;
 
-export type Phase1IpcChannelName =
-  (typeof PHASE1_IPC_CHANNELS)[keyof typeof PHASE1_IPC_CHANNELS];
+export type Phase1IpcChannelName = (typeof PHASE1_IPC_CHANNELS)[keyof typeof PHASE1_IPC_CHANNELS];
 
 export const PHASE1_PRELOAD_EXPOSED_KEYS = [
   'app',
@@ -63,7 +58,7 @@ export const PHASE1_PRELOAD_EXPOSED_KEYS = [
   'shell',
   'auth',
   'workspace',
-  'fs',
+  'files',
   'cache',
 ] as const;
 
@@ -137,14 +132,12 @@ export interface Phase1SunrisePreloadApi extends SunrisePreloadApi {
     ) => Promise<Result<WorkspaceLayoutState | null>>;
     readonly saveLayout: (layout: WorkspaceLayoutState) => Promise<Result<WorkspaceLayoutState>>;
   };
-  readonly fs: {
+  readonly files: {
     readonly pickFiles: (input: PickLocalFilesInput) => Promise<Result<PickLocalFilesOutput>>;
     readonly saveFile: (input: SaveLocalFileInput) => Promise<Result<SaveLocalFileOutput>>;
   };
   readonly cache: {
-    readonly putArtifact: (
-      record: CachedArtifactRecord,
-    ) => Promise<Result<CachedArtifactRecord>>;
+    readonly putArtifact: (record: CachedArtifactRecord) => Promise<Result<CachedArtifactRecord>>;
     readonly getArtifact: (
       input: GetCachedArtifactInput,
     ) => Promise<Result<CachedArtifactRecord | null>>;

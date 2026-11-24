@@ -20,12 +20,7 @@ export const BrowserWindowWebPreferencesSchema = z.object({
 
 export type BrowserWindowWebPreferences = z.infer<typeof BrowserWindowWebPreferencesSchema>;
 
-export const FORBIDDEN_CSP_TOKENS = [
-  'unsafe-eval',
-  'unsafe-inline',
-  'http:',
-  '*',
-] as const;
+export const FORBIDDEN_CSP_TOKENS = ['unsafe-eval', 'unsafe-inline', 'http:', '*'] as const;
 
 export const REQUIRED_CSP_DIRECTIVES = [
   "default-src 'self'",

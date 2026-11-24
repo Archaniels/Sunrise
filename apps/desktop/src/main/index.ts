@@ -8,10 +8,15 @@ import {
   applyCspToResponseHeaders,
   assertValidMainWindowCsp,
   createMainWindowOptions,
+  DEFAULT_ALLOWED_NAVIGATION_ORIGINS,
+  isAllowedNavigationOrigin,
 } from './window-config.js';
 
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_URL = 'http://127.0.0.1:4000';
+const HEALTH_FETCH_TIMEOUT_MS = 5000;
+
+let cleanupRegisteredIpc: (() => void) | null = null;
 
 function readRuntimeVersions(): AppVersion {
   return {
@@ -35,18 +40,35 @@ function readWindowState(win: BrowserWindow | null): WindowState | undefined {
 }
 
 async function fetchApiHealth(apiBaseUrl: string): Promise<unknown> {
-  const response = await fetch(`${apiBaseUrl}/health`);
+  const response = await fetch(`${apiBaseUrl}/health`, {
+    signal: AbortSignal.timeout(HEALTH_FETCH_TIMEOUT_MS),
+  });
   return response.json();
 }
 
-export function createMainWindow(preloadPath: string): BrowserWindow {
+export function createMainWindow(
+  preloadPath: string,
+  allowedOrigins: ReadonlySet<string> = DEFAULT_ALLOWED_NAVIGATION_ORIGINS,
+): BrowserWindow {
   assertValidMainWindowCsp();
   const mainWindow = new BrowserWindow(createMainWindowOptions(preloadPath));
+
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_webContents, _permission, callback) => {
+      callback(false);
+    },
+  );
 
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: applyCspToResponseHeaders(details.responseHeaders),
     });
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isAllowedNavigationOrigin(targetUrl, allowedOrigins)) {
+      event.preventDefault();
+    }
   });
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -66,10 +88,16 @@ export async function startDesktopApp(): Promise<void> {
     openExternalUrl: (url: string) => shell.openExternal(url),
   });
 
-  registerIpcHandlers(ipcMain, services);
+  cleanupRegisteredIpc?.();
+  cleanupRegisteredIpc = registerIpcHandlers(ipcMain, services);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  app.on('will-quit', () => {
+    cleanupRegisteredIpc?.();
+    cleanupRegisteredIpc = null;
   });
 
   app.on('window-all-closed', () => {

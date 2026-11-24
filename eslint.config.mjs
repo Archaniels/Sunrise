@@ -57,6 +57,7 @@ const SHARED_FORBIDDEN_PATHS = [
   'fastify',
   'drizzle-orm',
   'pgvector',
+  'better-sqlite3',
 ];
 
 const RENDERER_FORBIDDEN_PATHS = [
@@ -66,6 +67,7 @@ const RENDERER_FORBIDDEN_PATHS = [
   'drizzle-orm',
   'pgvector',
   'fastify',
+  'better-sqlite3',
 ];
 
 const PRELOAD_FORBIDDEN_PATHS = [
@@ -74,6 +76,7 @@ const PRELOAD_FORBIDDEN_PATHS = [
   'drizzle-orm',
   'pgvector',
   'fastify',
+  'better-sqlite3',
 ];
 
 export default [
@@ -82,6 +85,9 @@ export default [
   },
   {
     files: ['**/*.{js,mjs,cjs}'],
+    linterOptions: {
+      noInlineConfig: true,
+    },
     plugins: {
       sunrise: sunrisePlugin,
     },
@@ -93,6 +99,9 @@ export default [
   },
   {
     files: ['**/*.{ts,tsx,mts,cts}'],
+    linterOptions: {
+      noInlineConfig: true,
+    },
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
@@ -188,7 +197,7 @@ export default [
       'no-restricted-imports': [
         'error',
         {
-          paths: ['pg', 'drizzle-orm', 'pgvector'],
+          paths: ['pg', 'drizzle-orm', 'pgvector', 'better-sqlite3'],
           patterns: ['../db/*', '../../db/*', '../renderer/*', '../../renderer/*'],
         },
       ],

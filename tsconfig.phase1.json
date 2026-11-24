@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": [
-    "packages/shared/src/**/*.ts",
-    "tests/phase0/**/*.ts",
-    "tests/phase1/**/*.ts",
-    "vitest.config.ts"
-  ]
-}

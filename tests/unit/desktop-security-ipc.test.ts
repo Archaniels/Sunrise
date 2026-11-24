@@ -14,6 +14,7 @@ import {
   applyCspToResponseHeaders,
   assertValidMainWindowCsp,
   createMainWindowOptions,
+  isAllowedNavigationOrigin,
 } from '../../apps/desktop/src/main/window-config.js';
 import { exposeSunriseApi } from '../../apps/desktop/src/preload/expose-api.js';
 
@@ -43,7 +44,7 @@ const SAMPLE_HEALTH: HealthResponse = {
 };
 
 describe('Phase 0.3 Electron main security, preload bridge, and desktop services', () => {
-  it('enforces CSP header injection and rejects weakened CSP or empty preload path', () => {
+  it('enforces CSP header deduplication, navigation origin lock, and hardened preferences', () => {
     const options = createMainWindowOptions('/app/preload/index.cjs');
     expect(options.webPreferences?.contextIsolation).toBe(true);
     expect(options.webPreferences?.nodeIntegration).toBe(false);
@@ -53,9 +54,18 @@ describe('Phase 0.3 Electron main security, preload bridge, and desktop services
     expect(() => createMainWindowOptions('')).toThrow();
     expect(() => assertValidMainWindowCsp("default-src 'self' 'unsafe-eval'")).toThrow();
 
-    const headers = applyCspToResponseHeaders({ 'X-Frame-Options': ['DENY'] });
+    const headers = applyCspToResponseHeaders({
+      'X-Frame-Options': ['DENY'],
+      'content-security-policy': ["default-src * 'unsafe-eval'"],
+    });
+    expect(headers['content-security-policy']).toBeUndefined();
     expect(headers['Content-Security-Policy']?.[0]).toContain("default-src 'self'");
     expect(headers['X-Frame-Options']).toEqual(['DENY']);
+
+    expect(isAllowedNavigationOrigin('file:///app/index.html')).toBe(true);
+    expect(isAllowedNavigationOrigin('http://127.0.0.1:5173/workspace')).toBe(true);
+    expect(isAllowedNavigationOrigin('https://evil.example.com/phish')).toBe(false);
+    expect(isAllowedNavigationOrigin('javascript:alert(1)')).toBe(false);
   });
 
   it('exposes frozen preload API via contextBridge and validates IPC requests and responses', async () => {
@@ -97,11 +107,14 @@ describe('Phase 0.3 Electron main security, preload bridge, and desktop services
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
-  it('registers all IPC channels, delegates to desktop services, and handles failure paths', async () => {
+  it('registers and cleans up all IPC channels and handles desktop service failures', async () => {
     const listeners = new Map<string, (event: unknown, payload?: unknown) => Promise<unknown>>();
     const registrar: IpcMainRegistrar = {
       handle: (channel, listener) => {
         listeners.set(channel, listener);
+      },
+      removeHandler: (channel) => {
+        listeners.delete(channel);
       },
     };
 
@@ -113,7 +126,7 @@ describe('Phase 0.3 Electron main security, preload bridge, and desktop services
       openExternalUrl,
     });
 
-    registerIpcHandlers(registrar, services);
+    const cleanup = registerIpcHandlers(registrar, services);
     expect(listeners.size).toBe(4);
 
     const versionListener = listeners.get(IPC_CHANNELS.APP_VERSION);
@@ -139,6 +152,9 @@ describe('Phase 0.3 Electron main security, preload bridge, and desktop services
       });
       expect(openExternalUrl).toHaveBeenCalledTimes(1);
     }
+
+    cleanup();
+    expect(listeners.size).toBe(0);
 
     const failingServices = createDesktopServices({
       getVersions: () => SAMPLE_VERSION,

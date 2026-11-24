@@ -57,10 +57,7 @@ interface FileExplorerServiceLike {
     actor: FileActor,
     fileId: string,
   ) => Promise<Result<DownloadFileResponse>>;
-  readonly previewFile: (
-    actor: FileActor,
-    fileId: string,
-  ) => Promise<Result<FilePreviewResponse>>;
+  readonly previewFile: (actor: FileActor, fileId: string) => Promise<Result<FilePreviewResponse>>;
   readonly searchFiles: (
     actor: FileActor,
     input: { readonly projectId: string; readonly query: string },
@@ -174,10 +171,9 @@ describe('Phase 1.3 Cloud file explorer and native OS IPC bridge acceptance', ()
 
   it('supports folder CRUD, upload, move, duplicate, download, preview, search, and rejects attacks', async () => {
     const servicePath = join(REPO_ROOT, 'apps/api/src/services/file-explorer-service.ts');
-    expect(
-      existsSync(servicePath),
-      'Missing apps/api/src/services/file-explorer-service.ts',
-    ).toBe(true);
+    expect(existsSync(servicePath), 'Missing apps/api/src/services/file-explorer-service.ts').toBe(
+      true,
+    );
 
     const loaded: unknown = await import(pathToFileURL(servicePath).href);
     expect(hasFunctionProp(loaded, 'createInMemoryFileExplorerService')).toBe(true);

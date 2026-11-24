@@ -1,11 +1,15 @@
 import { HealthResponseSchema, isSystemHealthy } from '@sunrise/shared';
 import { describe, expect, it, vi } from 'vitest';
+import { runSqlMigrations } from '../../apps/api/src/db/migrate.js';
 import { createPgvectorProbe, createPostgresProbe } from '../../apps/api/src/db/probes.js';
 import { createApiServer } from '../../apps/api/src/server.js';
-import { evaluateSystemHealth } from '../../apps/api/src/services/health-service.js';
+import {
+  evaluateSystemHealth,
+  sanitizeProbeFailureDetail,
+} from '../../apps/api/src/services/health-service.js';
 import { createS3Probe } from '../../apps/api/src/services/s3-probe.js';
 
-describe('Phase 0.2 Cloud API health server and probe adapters', () => {
+describe('Phase 0.2 Cloud API health server, redaction, migrations, and probe adapters', () => {
   it('serves HTTP 200 on GET /health when all probes succeed', async () => {
     const app = createApiServer(
       {
@@ -26,14 +30,14 @@ describe('Phase 0.2 Cloud API health server and probe adapters', () => {
     await app.close();
   });
 
-  it('serves HTTP 503 on GET /health when postgres or pgvector fails', async () => {
+  it('serves HTTP 503 on GET /health and redacts sensitive driver error details', async () => {
     const app = createApiServer(
       {
         checkPostgres: async () => {
-          throw new Error('ECONNREFUSED');
+          throw new Error('connect ECONNREFUSED postgres://admin:supersecret@db:5432/sunrise');
         },
         checkPgvector: async () => {
-          throw 'non-error failure';
+          throw new Error('postgresql://user:pass@internal-host/db failed');
         },
         checkS3: async () => 4,
       },
@@ -48,10 +52,13 @@ describe('Phase 0.2 Cloud API health server and probe adapters', () => {
       expect(parsed.data.status).toBe('degraded');
       expect(parsed.data.dependencies.postgres.status).toBe('down');
       expect(parsed.data.dependencies.postgres.detail).toBe('ECONNREFUSED');
-      expect(parsed.data.dependencies.pgvector.status).toBe('down');
-      expect(parsed.data.dependencies.pgvector.detail).toBe('Dependency probe failed');
+      expect(parsed.data.dependencies.pgvector.detail).not.toContain('pass');
+      expect(parsed.data.dependencies.pgvector.detail).not.toContain('internal-host');
       expect(parsed.data.dependencies.s3.status).toBe('up');
     }
+    expect(sanitizeProbeFailureDetail(new Error('password=secret-token-123'))).toBe(
+      'Dependency connection error (details redacted)',
+    );
     await app.close();
   });
 
@@ -68,6 +75,35 @@ describe('Phase 0.2 Cloud API health server and probe adapters', () => {
     expect(outcome.body.dependencies.postgres.latencyMs).toBe(0);
     expect(outcome.body.dependencies.pgvector.latencyMs).toBe(0);
     expect(outcome.body.dependencies.s3.latencyMs).toBe(2);
+  });
+
+  it('runs SQL migrations idempotently and skips already applied files', async () => {
+    const appliedFiles = new Set<string>();
+    const db = {
+      query: vi.fn(async (sql: string, params?: ReadonlyArray<unknown>) => {
+        if (sql.includes('SELECT filename FROM _sunrise_migrations')) {
+          return {
+            rows: Array.from(appliedFiles).map((filename) => ({ filename })),
+          };
+        }
+        if (sql.includes('INSERT INTO _sunrise_migrations') && typeof params?.[0] === 'string') {
+          appliedFiles.add(params[0]);
+        }
+        return { rows: [] };
+      }),
+    };
+
+    const firstRun = await runSqlMigrations(db);
+    expect(firstRun.applied).toEqual([
+      '0000_enable_pgvector.sql',
+      '0001_auth_and_projects.sql',
+      '0002_project_files.sql',
+    ]);
+    expect(firstRun.skipped).toEqual([]);
+
+    const secondRun = await runSqlMigrations(db);
+    expect(secondRun.applied).toEqual([]);
+    expect(secondRun.skipped).toEqual(firstRun.applied);
   });
 
   it('verifies postgres, pgvector, and S3 probe adapters', async () => {

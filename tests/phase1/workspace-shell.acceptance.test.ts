@@ -60,7 +60,9 @@ describe('Phase 1.2 Three-column workspace shell and layout persistence acceptan
     }
 
     const factory = (
-      loaded as { readonly createWorkspaceController: (projectId: string) => WorkspaceControllerLike }
+      loaded as {
+        readonly createWorkspaceController: (projectId: string) => WorkspaceControllerLike;
+      }
     ).createWorkspaceController;
     const projectId = '11111111-1111-4111-8111-111111111111';
     const workspace = factory(projectId);

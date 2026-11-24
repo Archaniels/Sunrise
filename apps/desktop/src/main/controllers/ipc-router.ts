@@ -10,13 +10,9 @@ import {
   type WindowState,
 } from '@sunrise/shared';
 import type { z } from 'zod';
+import type { IpcRouterServices } from '../services/system-service.js';
 
-export interface IpcRouterServices {
-  readonly getAppVersion: () => Promise<Result<AppVersion>>;
-  readonly checkHealth: () => Promise<Result<HealthResponse>>;
-  readonly getWindowState: () => Promise<Result<WindowState>>;
-  readonly openExternal: (url: string) => Promise<Result<OpenExternalOutput>>;
-}
+export type { IpcRouterServices } from '../services/system-service.js';
 
 export type IpcHandlerFn<TOutput> = (payload?: unknown) => Promise<Result<TOutput>>;
 
@@ -32,7 +28,15 @@ export interface IpcMainRegistrar {
     channel: IpcChannelName,
     listener: (event: unknown, payload?: unknown) => Promise<unknown>,
   ) => void;
+  readonly removeHandler?: (channel: IpcChannelName) => void;
 }
+
+const PHASE0_CHANNELS: ReadonlyArray<IpcChannelName> = [
+  IPC_CHANNELS.APP_VERSION,
+  IPC_CHANNELS.APP_HEALTH,
+  IPC_CHANNELS.WINDOW_GET_STATE,
+  IPC_CHANNELS.SHELL_OPEN_EXTERNAL,
+];
 
 function formatValidationMessage(error: z.ZodError): string {
   const firstMessage = error.issues[0]?.message;
@@ -110,16 +114,16 @@ export function createIpcHandlers(services: IpcRouterServices): IpcHandlerMap {
 export function registerIpcHandlers(
   registrar: IpcMainRegistrar,
   services: IpcRouterServices,
-): void {
+): () => void {
   const handlers = createIpcHandlers(services);
-  const channels: ReadonlyArray<IpcChannelName> = [
-    IPC_CHANNELS.APP_VERSION,
-    IPC_CHANNELS.APP_HEALTH,
-    IPC_CHANNELS.WINDOW_GET_STATE,
-    IPC_CHANNELS.SHELL_OPEN_EXTERNAL,
-  ];
-  for (const channel of channels) {
+  for (const channel of PHASE0_CHANNELS) {
+    registrar.removeHandler?.(channel);
     const handler = handlers[channel];
     registrar.handle(channel, (_event: unknown, payload?: unknown) => handler(payload));
   }
+  return (): void => {
+    for (const channel of PHASE0_CHANNELS) {
+      registrar.removeHandler?.(channel);
+    }
+  };
 }

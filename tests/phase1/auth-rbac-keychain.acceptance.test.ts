@@ -28,8 +28,12 @@ interface AuthServiceLike {
     readonly email: string;
     readonly password: string;
   }) => Promise<Result<AuthSessionResponse>>;
-  readonly refresh: (input: { readonly refreshToken: string }) => Promise<Result<AuthSessionResponse>>;
-  readonly logout: (input: { readonly refreshToken: string }) => Promise<Result<{ readonly revoked: true }>>;
+  readonly refresh: (input: {
+    readonly refreshToken: string;
+  }) => Promise<Result<AuthSessionResponse>>;
+  readonly logout: (input: {
+    readonly refreshToken: string;
+  }) => Promise<Result<{ readonly revoked: true }>>;
   readonly getMe: (accessToken: string | undefined) => Promise<Result<UserPublic>>;
 }
 
@@ -145,11 +149,13 @@ describe('Phase 1.1 Auth, RBAC project sharing, and OS keychain acceptance', () 
 
     const factory = (
       loaded as {
-        readonly createInMemoryProjectService: (users: ReadonlyArray<{
-          readonly id: string;
-          readonly email: string;
-          readonly displayName: string;
-        }>) => ProjectServiceLike;
+        readonly createInMemoryProjectService: (
+          users: ReadonlyArray<{
+            readonly id: string;
+            readonly email: string;
+            readonly displayName: string;
+          }>,
+        ) => ProjectServiceLike;
       }
     ).createInMemoryProjectService;
 
@@ -190,7 +196,10 @@ describe('Phase 1.1 Auth, RBAC project sharing, and OS keychain acceptance', () 
   });
 
   it('encrypts auth session through safeStorage without writing plaintext tokens to disk', async () => {
-    const servicePath = join(REPO_ROOT, 'apps/desktop/src/main/services/keychain-session-service.ts');
+    const servicePath = join(
+      REPO_ROOT,
+      'apps/desktop/src/main/services/keychain-session-service.ts',
+    );
     expect(
       existsSync(servicePath),
       'Missing apps/desktop/src/main/services/keychain-session-service.ts',

@@ -16,7 +16,10 @@ export interface HealthEvaluation {
   readonly body: HealthResponse;
 }
 
-const MAX_DETAIL_LENGTH = 300;
+const SENSITIVE_PATTERN =
+  /(?:postgres(?:ql)?|https?|s3):\/\/\S+|(?:password|secret|token|apikey|api_key|authorization)\s*[:=]\s*\S+/i;
+
+const SAFE_DRIVER_CODE_PATTERN = /\b(ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EHOSTUNREACH)\b/;
 
 function normalizeLatency(latencyMs: number): number {
   if (!Number.isFinite(latencyMs) || latencyMs < 0) {
@@ -25,12 +28,23 @@ function normalizeLatency(latencyMs: number): number {
   return latencyMs;
 }
 
-function extractFailureDetail(error: unknown): string {
-  if (error instanceof Error) {
-    const trimmed = error.message.trim();
-    if (trimmed.length > 0) {
-      return trimmed.slice(0, MAX_DETAIL_LENGTH);
-    }
+export function sanitizeProbeFailureDetail(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'Dependency probe failed';
+  }
+  const raw = error.message.trim();
+  if (raw.length === 0) {
+    return 'Dependency probe failed';
+  }
+  const codeMatch = SAFE_DRIVER_CODE_PATTERN.exec(raw);
+  if (codeMatch && codeMatch[1]) {
+    return codeMatch[1];
+  }
+  if (raw.toLowerCase().includes('pgvector extension')) {
+    return 'pgvector extension unavailable';
+  }
+  if (SENSITIVE_PATTERN.test(raw)) {
+    return 'Dependency connection error (details redacted)';
   }
   return 'Dependency probe failed';
 }
@@ -46,7 +60,7 @@ async function runDependencyProbe(probe: () => Promise<number>): Promise<Depende
     return {
       status: 'down',
       latencyMs: 0,
-      detail: extractFailureDetail(error),
+      detail: sanitizeProbeFailureDetail(error),
     };
   }
 }

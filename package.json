@@ -10,13 +10,12 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r typecheck",
-    "typecheck:phase1": "tsc --noEmit -p tsconfig.phase1.json",
-    "test": "vitest run tests/phase0 tests/unit tests/phase1/phase1-contracts.contract.test.ts",
+    "test": "vitest run",
     "test:phase0": "vitest run tests/phase0",
     "test:phase1": "vitest run tests/phase1",
     "test:contracts": "vitest run tests/phase0/governance-and-boundaries.contract.test.ts tests/phase0/shared-contracts.contract.test.ts tests/phase1/phase1-contracts.contract.test.ts",
     "format:check": "prettier --check .",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test"
+    "verify": "pnpm lint && pnpm typecheck && pnpm format:check && pnpm test"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

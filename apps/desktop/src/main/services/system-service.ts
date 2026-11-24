@@ -11,7 +11,13 @@ import {
   type Result,
   type WindowState,
 } from '@sunrise/shared';
-import type { IpcRouterServices } from '../controllers/ipc-router.js';
+
+export interface IpcRouterServices {
+  readonly getAppVersion: () => Promise<Result<AppVersion>>;
+  readonly checkHealth: () => Promise<Result<HealthResponse>>;
+  readonly getWindowState: () => Promise<Result<WindowState>>;
+  readonly openExternal: (url: string) => Promise<Result<OpenExternalOutput>>;
+}
 
 export interface DesktopRuntimeDependencies {
   readonly getVersions: () => AppVersion;

@@ -58,7 +58,8 @@ function buildOneThousandItems(projectId: string): QuickOpenItem[] {
     items.push({
       id: `00000000-0000-4000-8000-${suffix}`,
       projectId,
-      entityType: i % 4 === 0 ? 'document' : i % 4 === 1 ? 'reference' : i % 4 === 2 ? 'figure' : 'file',
+      entityType:
+        i % 4 === 0 ? 'document' : i % 4 === 1 ? 'reference' : i % 4 === 2 ? 'figure' : 'file',
       title: i === 512 ? 'Quantum_Error_Correction_Review.pdf' : `Item_${i}.md`,
       subtitle: 'Project artifact',
       path: i === 512 ? 'literature/Quantum_Error_Correction_Review.pdf' : `notes/Item_${i}.md`,
@@ -84,7 +85,9 @@ describe('Phase 1.4 Quick Open (Ctrl+P) and online-resilient local cache accepta
     }
 
     const factory = (
-      loaded as { readonly createQuickOpenIndex: (items: readonly QuickOpenItem[]) => QuickOpenIndexLike }
+      loaded as {
+        readonly createQuickOpenIndex: (items: readonly QuickOpenItem[]) => QuickOpenIndexLike;
+      }
     ).createQuickOpenIndex;
     const projectId = '11111111-1111-4111-8111-111111111111';
     const index = factory(buildOneThousandItems(projectId));
@@ -100,10 +103,9 @@ describe('Phase 1.4 Quick Open (Ctrl+P) and online-resilient local cache accepta
 
   it('persists read-only cached artifacts and offline drafts in local SQLite cache repository', async () => {
     const repoPath = join(REPO_ROOT, 'apps/desktop/src/main/db/local-cache-repository.ts');
-    expect(
-      existsSync(repoPath),
-      'Missing apps/desktop/src/main/db/local-cache-repository.ts',
-    ).toBe(true);
+    expect(existsSync(repoPath), 'Missing apps/desktop/src/main/db/local-cache-repository.ts').toBe(
+      true,
+    );
 
     const loaded: unknown = await import(pathToFileURL(repoPath).href);
     expect(hasFunctionProp(loaded, 'createLocalCacheRepository')).toBe(true);
@@ -112,7 +114,9 @@ describe('Phase 1.4 Quick Open (Ctrl+P) and online-resilient local cache accepta
     }
 
     const factory = (
-      loaded as { readonly createLocalCacheRepository: (dbPath: string) => LocalCacheRepositoryLike }
+      loaded as {
+        readonly createLocalCacheRepository: (dbPath: string) => LocalCacheRepositoryLike;
+      }
     ).createLocalCacheRepository;
     const repo = factory(':memory:');
 
@@ -150,10 +154,7 @@ describe('Phase 1.4 Quick Open (Ctrl+P) and online-resilient local cache accepta
   });
 
   it('reconciles offline drafts safely on reconnect and flags version conflicts without overwriting', async () => {
-    const syncPath = join(
-      REPO_ROOT,
-      'apps/desktop/src/main/services/connectivity-sync-service.ts',
-    );
+    const syncPath = join(REPO_ROOT, 'apps/desktop/src/main/services/connectivity-sync-service.ts');
     expect(
       existsSync(syncPath),
       'Missing apps/desktop/src/main/services/connectivity-sync-service.ts',

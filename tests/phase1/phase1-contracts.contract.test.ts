@@ -40,7 +40,8 @@ function buildQuickOpenCorpus(count: number): QuickOpenItem[] {
     items.push({
       id: `00000000-0000-4000-8000-${padded.padStart(12, '0')}`,
       projectId: SAMPLE_UUID_A,
-      entityType: i % 4 === 0 ? 'document' : i % 4 === 1 ? 'reference' : i % 4 === 2 ? 'figure' : 'file',
+      entityType:
+        i % 4 === 0 ? 'document' : i % 4 === 1 ? 'reference' : i % 4 === 2 ? 'figure' : 'file',
       title: i === 777 ? 'Chen2025_Climate_Synthesis.pdf' : `Artifact_${padded}.md`,
       subtitle: i === 777 ? 'Chen et al. (2025)' : `Folder ${i % 10}`,
       path: i === 777 ? 'papers/Chen2025_Climate_Synthesis.pdf' : `docs/Artifact_${padded}.md`,

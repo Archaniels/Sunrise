@@ -23,7 +23,9 @@ describe('Phase 0.1 and 0.4 ESLint boundary enforcement and verification pipelin
   });
 
   it('wires lint, typecheck, and test into root verify script', () => {
-    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as RootPackageShape;
+    const pkg = JSON.parse(
+      readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'),
+    ) as RootPackageShape;
     const verifyScript = pkg.scripts?.['verify'] ?? '';
     expect(verifyScript).toContain('lint');
     expect(verifyScript).toContain('typecheck');

@@ -12,6 +12,7 @@ Sunrise is a **Full-Stack AI Research Workspace** built as a TypeScript monorepo
 ## 2. Monorepo Boundaries
 
 Load ONLY the scoped `AGENTS.md` matching the workspace you are touching:
+
 - `packages/shared/AGENTS.md` — Pure TS types, Zod schemas, IPC/API/DTO contracts (zero Node, Electron, DOM, React, or DB imports).
 - `apps/desktop/AGENTS.md` — Electron Main (`controllers/`, `services/`, `db/`), Preload (`contextBridge` only), Renderer (React UI).
 - `apps/api/AGENTS.md` — Cloud API (`controllers/`, `services/`, `db/`), Postgres + `pgvector`, S3/MinIO, BYOK Vault, Raven Agent, Pluggable Compute Runner.
@@ -19,6 +20,7 @@ Load ONLY the scoped `AGENTS.md` matching the workspace you are touching:
 ## 3. Static Quality & Security Standards
 
 All TypeScript code, contracts, and tests MUST satisfy:
+
 - `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`.
 - Zero `any`, zero unsafe casts (`as unknown as ...`), zero `@ts-ignore`, zero `@ts-expect-error`, zero `eslint-disable`.
 - Zero general comments (`//`, `/* */`, `TODO`, `FIXME`) in source, contract, and test files. Code and names must be self-documenting.
@@ -28,6 +30,7 @@ All TypeScript code, contracts, and tests MUST satisfy:
 ## 4. Electron Software Factory Stages
 
 Every sub-phase in `ROADMAP.md` executes strictly in order:
+
 1. **Stage 1 — Horizon (Contracts & Failing Tests):** Define schemas/contracts in `packages/shared/` and write executable failing tests in `tests/`. Zero production code.
 2. **Human Gate — Mayflower & Owner:** Approve contracts, failing tests, and any `allowed-dependencies.json` delta.
 3. **Stage 2 — Indigo (Implementation):** Implement production code to make all Stage 1 tests pass and satisfy `pnpm verify`.
