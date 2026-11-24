@@ -37,6 +37,47 @@ export interface NativeFsService {
   readonly resolveFileToken: (token: string) => string | null;
 }
 
+async function inspectPickedFiles(
+  filePaths: readonly string[],
+  statFileSize: (filePath: string) => Promise<number>,
+  tokenToPath: Map<string, string>,
+): Promise<Result<PickedLocalFile[]>> {
+  const files: PickedLocalFile[] = [];
+  for (const filePath of filePaths) {
+    const fileName = basename(filePath);
+    if (!SafeFileNameSchema.safeParse(fileName).success) {
+      return err({
+        code: 'VALIDATION_ERROR',
+        message: 'Selected file name violates safety policy',
+      });
+    }
+    let sizeBytes: number;
+    try {
+      sizeBytes = await statFileSize(filePath);
+    } catch {
+      return err({
+        code: 'INTERNAL_ERROR',
+        message: 'Unable to read metadata for selected local file',
+      });
+    }
+    if (sizeBytes < 0 || sizeBytes > MAX_UPLOAD_BYTES) {
+      return err({
+        code: 'VALIDATION_ERROR',
+        message: 'Selected file exceeds maximum allowed upload size',
+      });
+    }
+    const token = randomUUID();
+    tokenToPath.set(token, filePath);
+    files.push({
+      fileToken: token,
+      fileName,
+      sizeBytes,
+      mimeType: classifyFileByName(fileName).mimeType,
+    });
+  }
+  return ok(files);
+}
+
 export function createNativeFsService(deps: NativeFsRuntimeDeps): NativeFsService {
   const tokenToPath = new Map<string, string>();
 
@@ -49,41 +90,29 @@ export function createNativeFsService(deps: NativeFsRuntimeDeps): NativeFsServic
           message: parsed.error.issues[0]?.message ?? 'Invalid file picker options',
         });
       }
-      const dialogResult = await deps.showOpenDialog({
-        multiple: parsed.data.multiple,
-        ...(parsed.data.allowedExtensions !== undefined
-          ? { allowedExtensions: parsed.data.allowedExtensions }
-          : {}),
-      });
+      let dialogResult: { readonly canceled: boolean; readonly filePaths: readonly string[] };
+      try {
+        dialogResult = await deps.showOpenDialog({
+          multiple: parsed.data.multiple,
+          ...(parsed.data.allowedExtensions !== undefined
+            ? { allowedExtensions: parsed.data.allowedExtensions }
+            : {}),
+        });
+      } catch {
+        return err({ code: 'INTERNAL_ERROR', message: 'Failed to open local file picker' });
+      }
       if (dialogResult.canceled) {
         return ok(PickLocalFilesOutputSchema.parse({ canceled: true, files: [] }));
       }
-      const files: PickedLocalFile[] = [];
-      for (const filePath of dialogResult.filePaths) {
-        const fileName = basename(filePath);
-        if (!SafeFileNameSchema.safeParse(fileName).success) {
-          return err({
-            code: 'VALIDATION_ERROR',
-            message: 'Selected file name violates safety policy',
-          });
-        }
-        const sizeBytes = await deps.statFileSize(filePath);
-        if (sizeBytes < 0 || sizeBytes > MAX_UPLOAD_BYTES) {
-          return err({
-            code: 'VALIDATION_ERROR',
-            message: 'Selected file exceeds maximum allowed upload size',
-          });
-        }
-        const token = randomUUID();
-        tokenToPath.set(token, filePath);
-        files.push({
-          fileToken: token,
-          fileName,
-          sizeBytes,
-          mimeType: classifyFileByName(fileName).mimeType,
-        });
+      const inspected = await inspectPickedFiles(
+        dialogResult.filePaths,
+        deps.statFileSize,
+        tokenToPath,
+      );
+      if (!inspected.ok) {
+        return inspected;
       }
-      return ok(PickLocalFilesOutputSchema.parse({ canceled: false, files }));
+      return ok(PickLocalFilesOutputSchema.parse({ canceled: false, files: inspected.value }));
     },
 
     saveFile: async (input): Promise<Result<SaveLocalFileOutput>> => {
@@ -101,11 +130,20 @@ export function createNativeFsService(deps: NativeFsRuntimeDeps): NativeFsServic
           message: 'File content exceeds maximum allowed size',
         });
       }
-      const dialogResult = await deps.showSaveDialog(parsed.data.suggestedName);
+      let dialogResult: { readonly canceled: boolean; readonly filePath?: string };
+      try {
+        dialogResult = await deps.showSaveDialog(parsed.data.suggestedName);
+      } catch {
+        return err({ code: 'INTERNAL_ERROR', message: 'Failed to open local save dialog' });
+      }
       if (dialogResult.canceled || !dialogResult.filePath) {
         return ok(SaveLocalFileOutputSchema.parse({ saved: false, canceled: true }));
       }
-      await deps.writeFileBytes(dialogResult.filePath, bytes);
+      try {
+        await deps.writeFileBytes(dialogResult.filePath, bytes);
+      } catch {
+        return err({ code: 'INTERNAL_ERROR', message: 'Failed to write local file' });
+      }
       const savedFileName = basename(dialogResult.filePath);
       const safeName = SafeFileNameSchema.safeParse(savedFileName);
       return ok(

@@ -44,6 +44,7 @@ import type { z } from 'zod';
 export interface FileActor {
   readonly userId: string;
   readonly role: ProjectRole;
+  readonly projectId?: string;
 }
 
 export interface ObjectStorageAdapter {
@@ -148,10 +149,38 @@ async function readStreamToBuffer(body: unknown): Promise<Buffer> {
   return Buffer.alloc(0);
 }
 
+export interface S3CommandExecutor {
+  readonly send: (command: CopyObjectCommand) => Promise<unknown>;
+}
+
+export function encodeCopySource(bucket: string, sourceKey: string): string {
+  const encodedKey = sourceKey
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `${encodeURIComponent(bucket)}/${encodedKey}`;
+}
+
+export function createS3CopyHandler(
+  executor: S3CommandExecutor,
+  bucket: string,
+): (sourceKey: string, targetKey: string) => Promise<void> {
+  return async (sourceKey: string, targetKey: string): Promise<void> => {
+    await executor.send(
+      new CopyObjectCommand({
+        Bucket: bucket,
+        CopySource: encodeCopySource(bucket, sourceKey),
+        Key: targetKey,
+      }),
+    );
+  };
+}
+
 export function createS3ObjectStorageAdapter(
   client: S3Client,
   bucket: string,
 ): ObjectStorageAdapter {
+  const copyObject = createS3CopyHandler(client, bucket);
   return {
     putObject: async (key, body, mimeType) => {
       await client.send(
@@ -171,15 +200,7 @@ export function createS3ObjectStorageAdapter(
         return null;
       }
     },
-    copyObject: async (sourceKey, targetKey) => {
-      await client.send(
-        new CopyObjectCommand({
-          Bucket: bucket,
-          CopySource: `${bucket}/${sourceKey}`,
-          Key: targetKey,
-        }),
-      );
-    },
+    copyObject,
     deleteObject: async (key) => {
       await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     },
@@ -250,12 +271,23 @@ function parseAuthorizedInput<TOutput>(
   return ok(parsed.data);
 }
 
+function assertProjectScope(actor: FileActor, targetProjectId: string): Result<true> {
+  if (actor.projectId !== undefined && actor.projectId !== targetProjectId) {
+    return err({ code: 'FORBIDDEN', message: 'Actor is not authorized for target project' });
+  }
+  return ok(true);
+}
+
 function findActiveNode(
   nodes: Map<string, ProjectFileNode>,
   fileId: string,
+  expectedProjectId?: string,
 ): Result<ProjectFileNode> {
   const existing = nodes.get(fileId);
   if (!existing || existing.deletedAt !== null) {
+    return err({ code: 'NOT_FOUND', message: 'File or folder not found' });
+  }
+  if (expectedProjectId !== undefined && existing.projectId !== expectedProjectId) {
     return err({ code: 'NOT_FOUND', message: 'File or folder not found' });
   }
   return ok(existing);
@@ -294,14 +326,15 @@ function isDescendantFolder(
   return false;
 }
 
-function updateDescendantPaths(
+function computeDescendantPathUpdates(
   nodes: Map<string, ProjectFileNode>,
   oldPrefix: string,
   newPrefix: string,
   projectId: string,
   updatedAt: string,
-): void {
+): Result<ReadonlyArray<{ readonly id: string; readonly node: ProjectFileNode }>> {
   const prefixWithSlash = `${oldPrefix}/`;
+  const updates: Array<{ readonly id: string; readonly node: ProjectFileNode }> = [];
   for (const [id, node] of nodes.entries()) {
     const isChild =
       node.projectId === projectId &&
@@ -313,9 +346,25 @@ function updateDescendantPaths(
     const checked = validateSafeVirtualPath(
       `${newPrefix}${node.virtualPath.slice(oldPrefix.length)}`,
     );
-    if (checked.ok) {
-      nodes.set(id, { ...node, virtualPath: checked.value, updatedAt });
+    if (!checked.ok) {
+      return err({
+        code: 'VALIDATION_ERROR',
+        message: 'Descendant virtual path exceeds safety constraints',
+      });
     }
+    updates.push({ id, node: { ...node, virtualPath: checked.value, updatedAt } });
+  }
+  return ok(updates);
+}
+
+function applyNodeAndDescendantUpdates(
+  nodes: Map<string, ProjectFileNode>,
+  updated: ProjectFileNode,
+  descendantUpdates: ReadonlyArray<{ readonly id: string; readonly node: ProjectFileNode }>,
+): void {
+  nodes.set(updated.id, updated);
+  for (const entry of descendantUpdates) {
+    nodes.set(entry.id, entry.node);
   }
 }
 
@@ -513,6 +562,10 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
+      const scope = assertProjectScope(actor, validated.value.projectId);
+      if (!scope.ok) {
+        return scope;
+      }
       const pathRes = resolveTargetLocation(
         nodes,
         validated.value.projectId,
@@ -557,6 +610,10 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
+      const scope = assertProjectScope(actor, validated.value.projectId);
+      if (!scope.ok) {
+        return scope;
+      }
       const pathRes = resolveTargetLocation(
         nodes,
         validated.value.projectId,
@@ -574,6 +631,10 @@ export function createFileExplorerService(
       const fileId = randomUUID();
       const s3Key = buildS3Key(validated.value.projectId, fileId, validated.value.fileName);
       const mimeType = validated.value.mimeType ?? classified.mimeType;
+      const effectiveSizeBytes =
+        validated.value.contentBase64 !== undefined
+          ? bytesRes.value.length
+          : validated.value.sizeBytes;
       await storage.putObject(s3Key, bytesRes.value, mimeType);
       const timestamp = now().toISOString();
       const fileNode = ProjectFileNodeSchema.parse({
@@ -586,7 +647,7 @@ export function createFileExplorerService(
         kind: classified.kind,
         category: classified.category,
         mimeType,
-        sizeBytes: validated.value.sizeBytes,
+        sizeBytes: effectiveSizeBytes,
         s3Key,
         checksumSha256: sha256Buffer(bytesRes.value),
         version: 1,
@@ -610,7 +671,7 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
-      const existingRes = findActiveNode(nodes, validated.value.fileId);
+      const existingRes = findActiveNode(nodes, validated.value.fileId, actor.projectId);
       if (!existingRes.ok) {
         return existingRes;
       }
@@ -626,6 +687,18 @@ export function createFileExplorerService(
         return pathRes;
       }
       const updatedAt = now().toISOString();
+      const descendantUpdatesRes = existing.isFolder
+        ? computeDescendantPathUpdates(
+            nodes,
+            existing.virtualPath,
+            pathRes.value,
+            existing.projectId,
+            updatedAt,
+          )
+        : ok([]);
+      if (!descendantUpdatesRes.ok) {
+        return descendantUpdatesRes;
+      }
       const classified = existing.isFolder ? null : classifyFileByName(validated.value.newName);
       const updated = ProjectFileNodeSchema.parse({
         ...existing,
@@ -637,16 +710,7 @@ export function createFileExplorerService(
         version: existing.version + 1,
         updatedAt,
       });
-      nodes.set(updated.id, updated);
-      if (existing.isFolder) {
-        updateDescendantPaths(
-          nodes,
-          existing.virtualPath,
-          pathRes.value,
-          existing.projectId,
-          updatedAt,
-        );
-      }
+      applyNodeAndDescendantUpdates(nodes, updated, descendantUpdatesRes.value);
       return ok(updated);
     },
 
@@ -661,7 +725,7 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
-      const existingRes = findActiveNode(nodes, validated.value.fileId);
+      const existingRes = findActiveNode(nodes, validated.value.fileId, actor.projectId);
       if (!existingRes.ok) {
         return existingRes;
       }
@@ -683,6 +747,18 @@ export function createFileExplorerService(
         return pathRes;
       }
       const updatedAt = now().toISOString();
+      const descendantUpdatesRes = existing.isFolder
+        ? computeDescendantPathUpdates(
+            nodes,
+            existing.virtualPath,
+            pathRes.value,
+            existing.projectId,
+            updatedAt,
+          )
+        : ok([]);
+      if (!descendantUpdatesRes.ok) {
+        return descendantUpdatesRes;
+      }
       const updated = ProjectFileNodeSchema.parse({
         ...existing,
         parentId: validated.value.targetParentId,
@@ -690,16 +766,7 @@ export function createFileExplorerService(
         version: existing.version + 1,
         updatedAt,
       });
-      nodes.set(updated.id, updated);
-      if (existing.isFolder) {
-        updateDescendantPaths(
-          nodes,
-          existing.virtualPath,
-          pathRes.value,
-          existing.projectId,
-          updatedAt,
-        );
-      }
+      applyNodeAndDescendantUpdates(nodes, updated, descendantUpdatesRes.value);
       return ok(updated);
     },
 
@@ -714,7 +781,7 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
-      const sourceRes = findActiveNode(nodes, validated.value.fileId);
+      const sourceRes = findActiveNode(nodes, validated.value.fileId, actor.projectId);
       if (!sourceRes.ok) {
         return sourceRes;
       }
@@ -763,7 +830,7 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
-      const targetRes = findActiveNode(nodes, validated.value.fileId);
+      const targetRes = findActiveNode(nodes, validated.value.fileId, actor.projectId);
       if (!targetRes.ok) {
         return targetRes;
       }
@@ -783,7 +850,7 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
-      const nodeRes = findActiveNode(nodes, validated.value);
+      const nodeRes = findActiveNode(nodes, validated.value, actor.projectId);
       if (!nodeRes.ok || nodeRes.value.isFolder || nodeRes.value.s3Key === null) {
         return err({ code: 'NOT_FOUND', message: 'Downloadable file not found' });
       }
@@ -811,7 +878,7 @@ export function createFileExplorerService(
       if (!validated.ok) {
         return validated;
       }
-      const nodeRes = findActiveNode(nodes, validated.value);
+      const nodeRes = findActiveNode(nodes, validated.value, actor.projectId);
       if (!nodeRes.ok) {
         return nodeRes;
       }
@@ -828,6 +895,10 @@ export function createFileExplorerService(
       );
       if (!validated.ok) {
         return validated;
+      }
+      const scope = assertProjectScope(actor, validated.value.projectId);
+      if (!scope.ok) {
+        return scope;
       }
       const queryLower = validated.value.query.toLowerCase();
       const matches = Array.from(nodes.values()).filter((node) =>

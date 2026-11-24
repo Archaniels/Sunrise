@@ -43,7 +43,7 @@ async function resolveProjectActor(
     sendErrorReply(reply, access.error.code, access.error.message);
     return null;
   }
-  return { userId: me.value.id, role: access.value.role };
+  return { userId: me.value.id, role: access.value.role, projectId };
 }
 
 export function registerFileRoutes(
