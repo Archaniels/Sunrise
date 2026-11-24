@@ -1,8 +1,8 @@
 {
   "project": "sunrise",
   "schemaVersion": "1.0.0",
-  "updatedAt": "2026-11-24T15:37:00+07:00",
-  "activePhase": 0,
+  "updatedAt": "2026-11-24T15:44:00+07:00",
+  "activePhase": 1,
   "phases": [
     {
       "id": 0,
@@ -61,44 +61,44 @@
         {
           "id": "1.1",
           "title": "Authentication, RBAC Project Sharing & OS Keychain Session",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         },
         {
           "id": "1.2",
           "title": "Three-Column Workspace Shell & Navigation Architecture",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         },
         {
           "id": "1.3",
           "title": "Cloud File Explorer, Native OS Bridge & File Previews",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         },
         {
           "id": "1.4",
           "title": "Quick Open (Ctrl+P) & Online-Resilient Local Cache",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         }

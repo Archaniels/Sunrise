@@ -9,6 +9,8 @@
   "include": [
     "packages/shared/src/**/*.ts",
     "tests/phase0/**/*.ts",
+    "tests/phase1/**/*.ts",
+    "tests/unit/**/*.ts",
     "vitest.config.ts"
   ]
 }
