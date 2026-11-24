@@ -23,11 +23,10 @@
         "pgvector": "PostgreSQL vector similarity bindings for Knowledge Base",
         "@aws-sdk/client-s3": "S3 and MinIO object storage client"
       }
-    }
-  },
-  "pendingHumanGateDeltas": {
+    },
     "phase0Stage2Tooling": {
-      "reason": "TypeScript declaration packages and ESLint TypeScript parser required by Stage 2 implementation of Fastify, React, Node APIs, and strict lint rules",
+      "approvedBy": "Human Owner",
+      "approvedAt": "2026-11-24",
       "packages": {
         "@types/node": "TypeScript definitions for Node.js APIs in apps/api, apps/desktop main, and test harnesses",
         "@types/pg": "TypeScript definitions for pg driver in apps/api",
@@ -37,5 +36,6 @@
         "drizzle-kit": "SQL migration generation and runner for apps/api/src/db"
       }
     }
-  }
+  },
+  "pendingHumanGateDeltas": {}
 }

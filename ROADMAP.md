@@ -1,6 +1,6 @@
 # Sunrise — Master Implementation Roadmap & Status Report
 
-**Current Stage:** Phase 0 — Stage 1 (Contracts, Governance & Failing Tests in progress by Horizon)  
+**Current Stage:** Phase 0 — Stage 2 (Human Gate approved; Implementation in progress by Indigo)  
 **Machine-Readable Tracker:** `docs/status/phases.json`  
 **Architecture Specification:** `docs/architecture/sunrise-architecture.md`
 
@@ -8,10 +8,10 @@
 
 | Phase | Sub-Phase | Objective | Stage 1 (Horizon) | Human Gate | Stage 2 (Indigo) | Stage 3 (Nex) | Status |
 |---|---|---|---|---|---|---|---|
-| **0** | `0.1` | Governance, Monorepo, Boundary Lint & Allowlist | `[x]` | `[ ]` | `[ ]` | `[ ]` | Stage 1 Ready |
-| **0** | `0.2` | Docker Compose (Postgres+pgvector, MinIO) & Migrations | `[x]` | `[ ]` | `[ ]` | `[ ]` | Stage 1 Ready |
-| **0** | `0.3` | Hardened Electron Shell & Typed IPC Baseline | `[x]` | `[ ]` | `[ ]` | `[ ]` | Stage 1 Ready |
-| **0** | `0.4` | Unified Verification Script & Status Tracker | `[x]` | `[ ]` | `[ ]` | `[ ]` | Stage 1 Ready |
+| **0** | `0.1` | Governance, Monorepo, Boundary Lint & Allowlist | `[x]` | `[x]` | `[ ]` | `[ ]` | Stage 2 In Progress |
+| **0** | `0.2` | Docker Compose (Postgres+pgvector, MinIO) & Migrations | `[x]` | `[x]` | `[ ]` | `[ ]` | Stage 2 In Progress |
+| **0** | `0.3` | Hardened Electron Shell & Typed IPC Baseline | `[x]` | `[x]` | `[ ]` | `[ ]` | Stage 2 In Progress |
+| **0** | `0.4` | Unified Verification Script & Status Tracker | `[x]` | `[x]` | `[ ]` | `[ ]` | Stage 2 In Progress |
 | **1** | `1.1` | Auth, RBAC Project Sharing & OS Keychain Session | `[ ]` | `[ ]` | `[ ]` | `[ ]` | Not Started |
 | **1** | `1.2` | 3-Column Workspace Shell & Dynamic Artifact Tabs | `[ ]` | `[ ]` | `[ ]` | `[ ]` | Not Started |
 | **1** | `1.3` | S3 File Explorer, Native OS Bridge & Previews | `[ ]` | `[ ]` | `[ ]` | `[ ]` | Not Started |

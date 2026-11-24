@@ -1,7 +1,7 @@
 {
   "project": "sunrise",
   "schemaVersion": "1.0.0",
-  "updatedAt": "2026-11-24T14:52:00+07:00",
+  "updatedAt": "2026-11-24T15:06:00+07:00",
   "activePhase": 0,
   "phases": [
     {
@@ -11,44 +11,44 @@
         {
           "id": "0.1",
           "title": "Governance, Repo Topology & Dependency Allowlist",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         },
         {
           "id": "0.2",
           "title": "Cloud Infrastructure & Database Harness (Docker Compose)",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         },
         {
           "id": "0.3",
           "title": "Hardened Electron Shell & Typed IPC Baseline",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         },
         {
           "id": "0.4",
           "title": "CI Verification & Phase Tracking Automation",
-          "status": "stage1_ready",
+          "status": "in_progress",
           "stages": {
             "stage1ContractsTests": "done",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
+            "humanGate": "done",
+            "stage2Implementation": "in_progress",
             "stage3Verification": "pending"
           }
         }
