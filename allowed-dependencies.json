@@ -1,0 +1,41 @@
+{
+  "$schema": "./docs/status/allowed-dependencies.schema.json",
+  "policy": "No package may be added to any workspace package.json without explicit Human Gate approval and a matching entry here.",
+  "approvedPhases": {
+    "phase0": {
+      "approvedBy": "Human Owner",
+      "approvedAt": "2026-11-24",
+      "packages": {
+        "typescript": "Strict static typing across monorepo",
+        "zod": "Runtime contract validation across shared, IPC, and API boundaries",
+        "vitest": "Executable unit, contract, and acceptance test runner",
+        "@playwright/test": "End-to-end Electron and web workflow verification",
+        "eslint": "Static boundary, complexity, and code-quality enforcement",
+        "prettier": "Deterministic code formatting",
+        "electron": "Desktop runtime shell",
+        "electron-vite": "Electron main/preload/renderer build pipeline",
+        "react": "Renderer UI library",
+        "react-dom": "Renderer DOM bindings",
+        "tailwindcss": "Utility-first styling for desktop renderer",
+        "fastify": "Typed HTTP/SSE Cloud API framework",
+        "pg": "PostgreSQL client driver",
+        "drizzle-orm": "Typed SQL schema and query builder",
+        "pgvector": "PostgreSQL vector similarity bindings for Knowledge Base",
+        "@aws-sdk/client-s3": "S3 and MinIO object storage client"
+      }
+    }
+  },
+  "pendingHumanGateDeltas": {
+    "phase0Stage2Tooling": {
+      "reason": "TypeScript declaration packages and ESLint TypeScript parser required by Stage 2 implementation of Fastify, React, Node APIs, and strict lint rules",
+      "packages": {
+        "@types/node": "TypeScript definitions for Node.js APIs in apps/api, apps/desktop main, and test harnesses",
+        "@types/pg": "TypeScript definitions for pg driver in apps/api",
+        "@types/react": "TypeScript definitions for React in apps/desktop renderer",
+        "@types/react-dom": "TypeScript definitions for React DOM in apps/desktop renderer",
+        "typescript-eslint": "Strict TypeScript ESLint parser and rules (no-explicit-any, boundary rules, complexity)",
+        "drizzle-kit": "SQL migration generation and runner for apps/api/src/db"
+      }
+    }
+  }
+}

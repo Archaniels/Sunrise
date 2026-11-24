@@ -1,0 +1,24 @@
+{
+  "name": "sunrise-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:phase0": "vitest run tests/phase0",
+    "test:contracts": "vitest run tests/phase0/governance-and-boundaries.contract.test.ts tests/phase0/shared-contracts.contract.test.ts",
+    "format:check": "prettier --check .",
+    "verify": "pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "eslint": "^9.20.0",
+    "prettier": "^3.5.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

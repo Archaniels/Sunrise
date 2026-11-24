@@ -1,0 +1,397 @@
+{
+  "project": "sunrise",
+  "schemaVersion": "1.0.0",
+  "updatedAt": "2026-11-24T14:52:00+07:00",
+  "activePhase": 0,
+  "phases": [
+    {
+      "id": 0,
+      "name": "Factory Foundation, Monorepo & Infrastructure Bootstrap",
+      "subPhases": [
+        {
+          "id": "0.1",
+          "title": "Governance, Repo Topology & Dependency Allowlist",
+          "status": "stage1_ready",
+          "stages": {
+            "stage1ContractsTests": "done",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "0.2",
+          "title": "Cloud Infrastructure & Database Harness (Docker Compose)",
+          "status": "stage1_ready",
+          "stages": {
+            "stage1ContractsTests": "done",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "0.3",
+          "title": "Hardened Electron Shell & Typed IPC Baseline",
+          "status": "stage1_ready",
+          "stages": {
+            "stage1ContractsTests": "done",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "0.4",
+          "title": "CI Verification & Phase Tracking Automation",
+          "status": "stage1_ready",
+          "stages": {
+            "stage1ContractsTests": "done",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "name": "Auth, Projects, 3-Column Workspace Shell & File Explorer",
+      "subPhases": [
+        {
+          "id": "1.1",
+          "title": "Authentication, RBAC Project Sharing & OS Keychain Session",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "1.2",
+          "title": "Three-Column Workspace Shell & Navigation Architecture",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "1.3",
+          "title": "Cloud File Explorer, Native OS Bridge & File Previews",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "1.4",
+          "title": "Quick Open (Ctrl+P) & Online-Resilient Local Cache",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Literature Discovery, Reference Manager & PDF Reader",
+      "subPhases": [
+        {
+          "id": "2.1",
+          "title": "Federated Literature Search & Deduplication Engine",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "2.2",
+          "title": "Project Bibliography Database & Reference Manager UI",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "2.3",
+          "title": "Multi-Channel Ingestion: DOI, BibTeX/RIS & Deterministic PDF Extraction",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "2.4",
+          "title": "Integrated Academic PDF Viewer (pdf.js)",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Academic Document Editor, LaTeX & Live Citation Engine",
+      "subPhases": [
+        {
+          "id": "3.1",
+          "title": "TipTap Structured Academic Editor, Comments & Autosave",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "3.2",
+          "title": "Inline @ Global/Citation Autocomplete & [@citekey] Engine",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "3.3",
+          "title": "CSL Citation Formatter (citeproc) & Auto-Updating Bibliography",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "3.4",
+          "title": "Live LaTeX Equations (KaTeX) & Document Import/Export Pipeline",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Raven AI Copilot, Explicit Context Control & Reviewable Diffs",
+      "subPhases": [
+        {
+          "id": "4.1",
+          "title": "BYOK Encrypted Key Vault & Multi-Provider LLM Router",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "4.2",
+          "title": "Raven Sidebar UI, Explicit Context Pills & Thread Persistence",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "4.3",
+          "title": "Categorized Academic Action Buttons & Tiered Tool Approval",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "4.4",
+          "title": "Reviewable Inline Diff Proposals (Never Silently Overwrite)",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Project Knowledge Base (RAG), Citation Guardrails & Source Audit",
+      "subPhases": [
+        {
+          "id": "5.1",
+          "title": "Background Ingestion Pipeline: Text Extraction, Chunking & pgvector Indexing",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "5.2",
+          "title": "Hybrid Semantic Search & File/Page Deep-Link Citations",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "5.3",
+          "title": "Source Audit Reviewer & Citation Guardrails",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Computational Analysis, Notebooks, SQL, Diagrams & Figure Artifacts",
+      "subPhases": [
+        {
+          "id": "6.1",
+          "title": "Pluggable Compute Runner & Isolated Docker Jupyter Containers",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "6.2",
+          "title": "Interactive Data Grid (CSV/XLSX) & Code / Jupyter Notebook Editor",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "6.3",
+          "title": "Mermaid Diagram Editor & Live Rendering",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "6.4",
+          "title": "Unified Figure Artifact Pipeline & Document Integration",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Literature Map, Hardening, Verification & Release Packaging",
+      "subPhases": [
+        {
+          "id": "7.1",
+          "title": "Interactive Literature Map & Research Cluster Visualization",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "7.2",
+          "title": "Cross-Feature End-to-End Integration & Workflow Verification",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "7.3",
+          "title": "Security, Performance & Accessibility Audit",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        },
+        {
+          "id": "7.4",
+          "title": "Electron Build, Packaging & Operational Runbooks",
+          "status": "not_started",
+          "stages": {
+            "stage1ContractsTests": "pending",
+            "humanGate": "pending",
+            "stage2Implementation": "pending",
+            "stage3Verification": "pending"
+          }
+        }
+      ]
+    }
+  ]
+}

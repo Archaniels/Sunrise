@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@sunrise/shared": ["./packages/shared/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/shared/src/**/*.ts",
+    "tests/phase0/**/*.ts",
+    "vitest.config.ts"
+  ]
+}
