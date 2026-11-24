@@ -37,5 +37,18 @@
       }
     }
   },
-  "pendingHumanGateDeltas": {}
+  "pendingHumanGateDeltas": {
+    "phase1Stage2": {
+      "reason": "Phase 1 (1.1-1.4) authentication, S3 presigned URLs, 3-column resizable IDE shell, icons, and local SQLite read-only cache/draft recovery. Note: argon2 and better-sqlite3 also require pnpm-workspace.yaml allowBuilds approval.",
+      "packages": {
+        "argon2": "OWASP-compliant Argon2id password hashing in apps/api (1.1); preferred over bcrypt/scrypt",
+        "jose": "Zero-dependency ESM-native JWT signing and verification for access and rotating refresh tokens in apps/api (1.1); preferred over jsonwebtoken",
+        "@aws-sdk/s3-request-presigner": "Presigned S3/MinIO upload and download URL generation in apps/api (1.3), companion to approved @aws-sdk/client-s3",
+        "better-sqlite3": "Embedded SQLite driver for local read-only cache and offline draft recovery in apps/desktop/src/main/db (1.4)",
+        "@types/better-sqlite3": "Strict TypeScript definitions for better-sqlite3 in apps/desktop main process (1.4)",
+        "lucide-react": "Tree-shakeable vector icon library for 3-column workspace sidebar, file explorer, tabs, and offline indicator in apps/desktop renderer (1.2-1.4)",
+        "react-resizable-panels": "Accessible keyboard-navigable resizable 3-column IDE split panes in apps/desktop renderer (1.2)"
+      }
+    }
+  }
 }

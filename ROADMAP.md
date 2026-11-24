@@ -1,6 +1,6 @@
 # Sunrise — Master Implementation Roadmap & Status Report
 
-**Current Stage:** Phase 0 — Complete (Nex Stage 3/4 PASS; ready for Phase 1 Stage 1)  
+**Current Stage:** Phase 1 — Stage 1 Complete (Contracts, Allowlist Delta & Failing Acceptance Tests ready for Human Gate)  
 **Machine-Readable Tracker:** `docs/status/phases.json`  
 **Architecture Specification:** `docs/architecture/sunrise-architecture.md`
 
@@ -12,10 +12,10 @@
 | **0** | `0.2`     | Docker Compose (Postgres+pgvector, MinIO) & Migrations   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
 | **0** | `0.3`     | Hardened Electron Shell & Typed IPC Baseline             | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
 | **0** | `0.4`     | Unified Verification Script & Status Tracker             | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **1** | `1.1`     | Auth, RBAC Project Sharing & OS Keychain Session         | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **1** | `1.2`     | 3-Column Workspace Shell & Dynamic Artifact Tabs         | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **1** | `1.3`     | S3 File Explorer, Native OS Bridge & Previews            | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **1** | `1.4`     | Quick Open (`Ctrl+P`) & Offline Read-Only Cache/Drafts   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
+| **1** | `1.1`     | Auth, RBAC Project Sharing & OS Keychain Session         | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
+| **1** | `1.2`     | 3-Column Workspace Shell & Dynamic Artifact Tabs         | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
+| **1** | `1.3`     | S3 File Explorer, Native OS Bridge & Previews            | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
+| **1** | `1.4`     | Quick Open (`Ctrl+P`) & Offline Read-Only Cache/Drafts   | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
 | **2** | `2.1`     | Federated Literature Search (OpenAlex/Crossref/PubMed)   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
 | **2** | `2.2`     | Project Bibliography DB & Reference Manager UI           | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
 | **2** | `2.3`     | DOI, BibTeX/RIS & Deterministic PDF Metadata Ingestion   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
