@@ -1,44 +1,44 @@
 # Sunrise — Master Implementation Roadmap & Status Report
 
-**Current Stage:** Phase 2 — Stage 1 Complete (Contracts, Allowlist Delta & Failing Acceptance Tests ready for Human Gate)  
+**Current Stage:** Phase 2 — Human Gate Approved (Indigo Stage 2 Implementation + Phase 1 Hardening Carry-Forwards in progress)  
 **Machine-Readable Tracker:** `docs/status/phases.json`  
 **Architecture Specification:** `docs/architecture/sunrise-architecture.md`
 
 ## Phase & Sub-Phase Status Matrix
 
-| Phase | Sub-Phase | Objective                                                | Stage 1 (Horizon) | Human Gate | Stage 2 (Indigo) | Stage 3 (Nex) | Status          |
-| ----- | --------- | -------------------------------------------------------- | ----------------- | ---------- | ---------------- | ------------- | --------------- |
-| **0** | `0.1`     | Governance, Monorepo, Boundary Lint & Allowlist          | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **0** | `0.2`     | Docker Compose (Postgres+pgvector, MinIO) & Migrations   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **0** | `0.3`     | Hardened Electron Shell & Typed IPC Baseline             | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **0** | `0.4`     | Unified Verification Script & Status Tracker             | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **1** | `1.1`     | Auth, RBAC Project Sharing & OS Keychain Session         | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **1** | `1.2`     | 3-Column Workspace Shell & Dynamic Artifact Tabs         | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **1** | `1.3`     | S3 File Explorer, Native OS Bridge & Previews            | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **1** | `1.4`     | Quick Open (`Ctrl+P`) & Offline Read-Only Cache/Drafts   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **2** | `2.1`     | Federated Literature Search (OpenAlex/Crossref/PubMed)   | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
-| **2** | `2.2`     | Project Bibliography DB & Reference Manager UI           | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
-| **2** | `2.3`     | DOI, BibTeX/RIS & Deterministic PDF Metadata Ingestion   | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
-| **2** | `2.4`     | Integrated Academic PDF Viewer (`pdf.js`) & Highlights   | `[x]`             | `[ ]`      | `[ ]`            | `[ ]`         | Stage 1 Ready   |
-| **3** | `3.1`     | TipTap Academic Editor, Comments, Autosave & Snapshots   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **3** | `3.2`     | Inline `@` Search-and-Insert & `[@citekey]` Parsing      | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **3** | `3.3`     | CSL Engine (APA/IEEE/MLA) & Auto-Updating Bibliography   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **3** | `3.4`     | Live LaTeX (KaTeX) & DOCX/PDF/MD/LaTeX Import-Export     | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **4** | `4.1`     | BYOK Envelope-Encrypted Vault & Multi-Provider Router    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **4** | `4.2`     | Raven Sidebar, Explicit Context Pills & SSE Streaming    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **4** | `4.3`     | Academic Action Buttons & Tiered Tool Approval Engine    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **4** | `4.4`     | Reviewable Inline Diff Proposals (`[Accept]`/`[Reject]`) | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **5** | `5.1`     | Background PDF/Doc Extraction, Chunking & `pgvector` KB  | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **5** | `5.2`     | Hybrid Semantic Search & File/Page Deep-Link Citations   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **5** | `5.3`     | Source Audit Reviewer & Citation Fabrication Guardrails  | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **6** | `6.1`     | Pluggable Compute Runner (Docker Jupyter + DuckDB + E2B) | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **6** | `6.2`     | CSV/XLSX Data Grid & Code / Jupyter Notebook Editor      | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **6** | `6.3`     | Mermaid Split-Pane Diagram Editor & SVG/PNG Export       | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **6** | `6.4`     | Unified Figure Artifact Lifecycle & Document Insertion   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **7** | `7.1`     | Interactive Literature Map (OpenAlex Graph + Clusters)   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **7** | `7.2`     | End-to-End Researcher Lifecycle Integration Suites       | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **7** | `7.3`     | Security, Performance & Accessibility Hardening Audit    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **7** | `7.4`     | Electron Installers, Cloud Deployment & Ops Runbooks     | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
+| Phase | Sub-Phase | Objective                                                | Stage 1 (Horizon) | Human Gate | Stage 2 (Indigo) | Stage 3 (Nex) | Status              |
+| ----- | --------- | -------------------------------------------------------- | ----------------- | ---------- | ---------------- | ------------- | ------------------- |
+| **0** | `0.1`     | Governance, Monorepo, Boundary Lint & Allowlist          | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **0** | `0.2`     | Docker Compose (Postgres+pgvector, MinIO) & Migrations   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **0** | `0.3`     | Hardened Electron Shell & Typed IPC Baseline             | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **0** | `0.4`     | Unified Verification Script & Status Tracker             | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **1** | `1.1`     | Auth, RBAC Project Sharing & OS Keychain Session         | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **1** | `1.2`     | 3-Column Workspace Shell & Dynamic Artifact Tabs         | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **1** | `1.3`     | S3 File Explorer, Native OS Bridge & Previews            | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **1** | `1.4`     | Quick Open (`Ctrl+P`) & Offline Read-Only Cache/Drafts   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified)     |
+| **2** | `2.1`     | Federated Literature Search (OpenAlex/Crossref/PubMed)   | `[x]`             | `[x]`      | `[ ]`            | `[ ]`         | Stage 2 In Progress |
+| **2** | `2.2`     | Project Bibliography DB & Reference Manager UI           | `[x]`             | `[x]`      | `[ ]`            | `[ ]`         | Stage 2 In Progress |
+| **2** | `2.3`     | DOI, BibTeX/RIS & Deterministic PDF Metadata Ingestion   | `[x]`             | `[x]`      | `[ ]`            | `[ ]`         | Stage 2 In Progress |
+| **2** | `2.4`     | Integrated Academic PDF Viewer (`pdf.js`) & Highlights   | `[x]`             | `[x]`      | `[ ]`            | `[ ]`         | Stage 2 In Progress |
+| **3** | `3.1`     | TipTap Academic Editor, Comments, Autosave & Snapshots   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **3** | `3.2`     | Inline `@` Search-and-Insert & `[@citekey]` Parsing      | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **3** | `3.3`     | CSL Engine (APA/IEEE/MLA) & Auto-Updating Bibliography   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **3** | `3.4`     | Live LaTeX (KaTeX) & DOCX/PDF/MD/LaTeX Import-Export     | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **4** | `4.1`     | BYOK Envelope-Encrypted Vault & Multi-Provider Router    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **4** | `4.2`     | Raven Sidebar, Explicit Context Pills & SSE Streaming    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **4** | `4.3`     | Academic Action Buttons & Tiered Tool Approval Engine    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **4** | `4.4`     | Reviewable Inline Diff Proposals (`[Accept]`/`[Reject]`) | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **5** | `5.1`     | Background PDF/Doc Extraction, Chunking & `pgvector` KB  | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **5** | `5.2`     | Hybrid Semantic Search & File/Page Deep-Link Citations   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **5** | `5.3`     | Source Audit Reviewer & Citation Fabrication Guardrails  | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **6** | `6.1`     | Pluggable Compute Runner (Docker Jupyter + DuckDB + E2B) | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **6** | `6.2`     | CSV/XLSX Data Grid & Code / Jupyter Notebook Editor      | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **6** | `6.3`     | Mermaid Split-Pane Diagram Editor & SVG/PNG Export       | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **6** | `6.4`     | Unified Figure Artifact Lifecycle & Document Insertion   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **7** | `7.1`     | Interactive Literature Map (OpenAlex Graph + Clusters)   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **7** | `7.2`     | End-to-End Researcher Lifecycle Integration Suites       | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **7** | `7.3`     | Security, Performance & Accessibility Hardening Audit    | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
+| **7** | `7.4`     | Electron Installers, Cloud Deployment & Ops Runbooks     | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started         |
 
 ## Phase Milestones Summary
 

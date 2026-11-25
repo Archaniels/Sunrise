@@ -48,11 +48,10 @@
         "lucide-react": "Tree-shakeable vector icon library for 3-column workspace sidebar, file explorer, tabs, and offline indicator in apps/desktop renderer (1.2-1.4)",
         "react-resizable-panels": "Accessible keyboard-navigable resizable 3-column IDE split panes in apps/desktop renderer (1.2)"
       }
-    }
-  },
-  "pendingHumanGateDeltas": {
+    },
     "phase2Stage2": {
-      "reason": "Phase 2 (2.1-2.4) federated PubMed XML & PDF XMP parsing, BibTeX/RIS round-trip parsing/serialization, unified Mozilla pdf.js text extraction and academic PDF viewer, and headless Reference Manager table. Zero native addons or postinstall scripts; no pnpm-workspace.yaml allowBuilds additions required.",
+      "approvedBy": "Human Owner",
+      "approvedAt": "2026-11-25",
       "packages": {
         "fast-xml-parser": "Zero-native pure-JS XML parser for PubMed E-utilities efetch XML (2.1) and embedded PDF XMP metadata packets (2.3); preferred over legacy callback-based xml2js and brittle regex XML parsing",
         "@citation-js/core": "Modular ESM-native bibliography core with built-in TypeScript types for BibTeX/RIS normalization in apps/api (2.3); preferred over citation-js meta-package which runs a patch-package postinstall script and bundles unused Phase 3 plugins",
@@ -62,5 +61,6 @@
         "@tanstack/react-table": "Headless strictly-typed table state engine for the Reference Manager sortable/filterable workspace table in apps/desktop (2.2) and reused in Phase 6 CSV/XLSX grid; preferred over heavy commercial ag-grid-react"
       }
     }
-  }
+  },
+  "pendingHumanGateDeltas": {}
 }
