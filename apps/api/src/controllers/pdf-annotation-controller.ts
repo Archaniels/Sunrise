@@ -81,14 +81,20 @@ async function ensureAnnotationTargetsOwned(
   fileId: string,
   referenceId: string | null | undefined,
 ): Promise<boolean> {
-  if (guards?.assertFileInProject) {
-    const fileOk = await guards.assertFileInProject(projectId, fileId);
-    if (!fileOk) {
-      sendErrorReply(reply, 'NOT_FOUND', 'PDF file not found in this project');
+  if (!guards?.assertFileInProject) {
+    sendErrorReply(reply, 'NOT_FOUND', 'PDF file not found in this project');
+    return false;
+  }
+  const fileOk = await guards.assertFileInProject(projectId, fileId);
+  if (!fileOk) {
+    sendErrorReply(reply, 'NOT_FOUND', 'PDF file not found in this project');
+    return false;
+  }
+  if (referenceId) {
+    if (!guards.assertReferenceInProject) {
+      sendErrorReply(reply, 'NOT_FOUND', 'Reference not found in this project');
       return false;
     }
-  }
-  if (referenceId && guards?.assertReferenceInProject) {
     const refOk = await guards.assertReferenceInProject(projectId, referenceId);
     if (!refOk) {
       sendErrorReply(reply, 'NOT_FOUND', 'Reference not found in this project');

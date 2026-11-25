@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { Cite, type CSL, type CSLName } from '@citation-js/core';
 import '@citation-js/plugin-bibtex';
 import '@citation-js/plugin-ris';
 import {
   canRoleMutateReferences,
   CiteKeySchema,
+  computeTitleSimilarity,
   DEFAULT_PROVIDER_CLIENT_POLICY,
   err,
   ExportBibliographyInputSchema,
@@ -15,6 +17,7 @@ import {
   IngestDoiResponseSchema,
   IngestPdfInputSchema,
   IngestPdfResponseSchema,
+  normalizeAuthorFamilyForMatching,
   normalizeDoi,
   ok,
   type CreateReferenceInput,
@@ -100,6 +103,18 @@ export interface IngestionService {
   ) => Promise<Result<IngestPdfResponse>>;
 }
 
+type DoiLookupOutcome =
+  | { readonly kind: 'found'; readonly match: HydratedDoiMatch }
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'unavailable'; readonly reason: string };
+
+const RIS_TAG_LINE_PATTERN = /^[A-Z0-9]{2} {2}- /;
+const RIS_START_TAG_PATTERN = /^TY {2}- /m;
+const BIBTEX_ENTRY_PATTERN = /@[a-zA-Z]+\s*[{(]/;
+const BODY_DOI_TITLE_MATCH_THRESHOLD = 0.5;
+const BODY_DOI_AUTHOR_TITLE_FLOOR = 0.35;
+const MAX_BODY_DOIS_TO_VERIFY = 5;
+
 const XMP_PARSER = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -114,6 +129,58 @@ const XMP_PARSER = new XMLParser({
     maxEntityCount: 50,
   },
 });
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+export function unfoldRisDoiLines(risText: string): string {
+  const rawLines = risText.split(/\r?\n/);
+  const output: string[] = [];
+  let inDoiLine = false;
+
+  for (const line of rawLines) {
+    const trimmedEnd = line.replace(/\r$/, '');
+    if (trimmedEnd.startsWith('DO  - ')) {
+      output.push(trimmedEnd);
+      inDoiLine = true;
+      continue;
+    }
+    const isTagOrBlank = trimmedEnd.trim().length === 0 || RIS_TAG_LINE_PATTERN.test(trimmedEnd);
+    if (inDoiLine && !isTagOrBlank && output.length > 0) {
+      const lastIndex = output.length - 1;
+      output[lastIndex] = `${output[lastIndex] ?? ''}${trimmedEnd.trim()}`;
+      continue;
+    }
+    inDoiLine = false;
+    output.push(trimmedEnd);
+  }
+  return output.join('\n');
+}
+
+function validateBibliographyContentFormat(
+  content: string,
+  format: 'bibtex' | 'ris',
+): Result<string> {
+  const hasRisStart = RIS_START_TAG_PATTERN.test(content);
+  const hasBibtexStart = BIBTEX_ENTRY_PATTERN.test(content);
+  if (format === 'bibtex') {
+    if (!hasBibtexStart || hasRisStart) {
+      return err({
+        code: 'VALIDATION_ERROR',
+        message: 'Bibliography content does not match declared bibtex format',
+      });
+    }
+    return ok(content);
+  }
+  if (!hasRisStart || hasBibtexStart) {
+    return err({
+      code: 'VALIDATION_ERROR',
+      message: 'Bibliography content does not match declared ris format',
+    });
+  }
+  return ok(unfoldRisDoiLines(content));
+}
 
 function parseAuthorNameString(rawName: string): ReferenceAuthor | null {
   const cleaned = rawName.trim();
@@ -257,11 +324,21 @@ function isCslObject(value: unknown): value is CSL {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseBibliographyEntries(content: string): Result<CSL[]> {
+function parseBibliographyEntries(content: string, format: 'bibtex' | 'ris'): Result<CSL[]> {
+  const validated = validateBibliographyContentFormat(content, format);
+  if (!validated.ok) {
+    return validated;
+  }
   try {
-    const cite = new Cite(content);
+    const cite = new Cite(validated.value);
     const rawData: unknown = cite.data;
     const data = Array.isArray(rawData) ? rawData.filter(isCslObject) : [];
+    if (data.length === 0) {
+      return err({
+        code: 'VALIDATION_ERROR',
+        message: `No valid ${format} entries found in bibliography content`,
+      });
+    }
     return ok(data);
   } catch (error: unknown) {
     const message =
@@ -275,7 +352,8 @@ function parseBibliographyEntries(content: string): Result<CSL[]> {
 function formatBibliographyEntries(cslEntries: CSL[], format: 'bibtex' | 'ris'): Result<string> {
   try {
     const cite = new Cite(cslEntries);
-    return ok(String(cite.format(format)));
+    const serialized = String(cite.format(format));
+    return ok(format === 'ris' ? unfoldRisDoiLines(serialized) : serialized);
   } catch {
     return err({
       code: 'VALIDATION_ERROR',
@@ -339,21 +417,69 @@ function buildReferenceInputFromCandidate(
   };
 }
 
-function extractCandidateDoisFromPdf(extracted: ExtractedPdfContent): string[] {
-  const ordered: string[] = [];
-  const seen = new Set<string>();
-  const xmpDoi = extracted.xmpDoi !== null ? normalizeDoi(extracted.xmpDoi) : null;
-  if (xmpDoi !== null) {
-    seen.add(xmpDoi);
-    ordered.push(xmpDoi);
+function extractLeadingHeadingCandidates(text: string): string[] {
+  const lines = text
+    .slice(0, 2000)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 8)
+    .slice(0, 5);
+  const candidates = [...lines];
+  if (lines.length >= 2) {
+    candidates.push(`${lines[0] ?? ''} ${lines[1] ?? ''}`.trim());
   }
-  for (const doi of extractDoisFromText(extracted.text)) {
-    if (!seen.has(doi)) {
-      seen.add(doi);
-      ordered.push(doi);
+  return candidates;
+}
+
+function extractNormalizedXmpAuthorFamilies(xmpAuthors: readonly string[]): Set<string> {
+  const families = new Set<string>();
+  for (const rawAuthor of xmpAuthors) {
+    const parsed = parseAuthorNameString(rawAuthor);
+    if (!parsed) {
+      continue;
+    }
+    const normalized = normalizeAuthorFamilyForMatching(parsed);
+    if (normalized.length > 0) {
+      families.add(normalized);
     }
   }
-  return ordered;
+  return families;
+}
+
+function candidateSharesXmpAuthor(
+  candidate: ProviderPaperCandidate,
+  xmpFamilies: ReadonlySet<string>,
+): boolean {
+  if (xmpFamilies.size === 0) {
+    return false;
+  }
+  return candidate.authors.some((author) => {
+    const normalized = normalizeAuthorFamilyForMatching(author);
+    return normalized.length > 0 && xmpFamilies.has(normalized);
+  });
+}
+
+function doesHydratedCandidateMatchPdf(
+  candidate: ProviderPaperCandidate,
+  extracted: ExtractedPdfContent,
+): boolean {
+  const xmpTitle = extracted.xmpTitle?.trim() ?? '';
+  const xmpTitleScore = xmpTitle.length > 0 ? computeTitleSimilarity(xmpTitle, candidate.title) : 0;
+  if (xmpTitleScore >= BODY_DOI_TITLE_MATCH_THRESHOLD) {
+    return true;
+  }
+  const headings = extractLeadingHeadingCandidates(extracted.text);
+  const headingMatch = headings.some(
+    (heading) => computeTitleSimilarity(heading, candidate.title) >= BODY_DOI_TITLE_MATCH_THRESHOLD,
+  );
+  if (headingMatch) {
+    return true;
+  }
+  const xmpFamilies = extractNormalizedXmpAuthorFamilies(extracted.xmpAuthors);
+  if (!candidateSharesXmpAuthor(candidate, xmpFamilies)) {
+    return false;
+  }
+  return xmpTitle.length === 0 || xmpTitleScore >= BODY_DOI_AUTHOR_TITLE_FLOOR;
 }
 
 function buildHeuristicPdfMetadata(
@@ -374,29 +500,54 @@ function buildHeuristicPdfMetadata(
   return { title, authors, year, journal: null, abstract: null };
 }
 
-async function resolvePdfBytes(
-  deps: IngestionServiceDeps,
-  parsed: ReturnType<typeof IngestPdfInputSchema.parse>,
+async function loadStoredPdfBytes(
+  fetchPdfBytes: NonNullable<IngestionServiceDeps['fetchPdfBytes']>,
+  projectId: string,
+  fileId: string,
 ): Promise<Result<Uint8Array>> {
-  if (parsed.pdfBase64 !== undefined) {
-    return ok(Uint8Array.from(Buffer.from(parsed.pdfBase64, 'base64')));
-  }
-  if (deps.fetchPdfBytes !== undefined) {
-    try {
-      const fetched = await deps.fetchPdfBytes(parsed.projectId, parsed.localPdfFileId);
-      if (fetched !== null) {
-        return ok(fetched);
-      }
+  try {
+    const fetched = await fetchPdfBytes(projectId, fileId);
+    if (fetched === null) {
       return err({
         code: 'NOT_FOUND',
         message: 'PDF bytes could not be loaded for localPdfFileId',
       });
-    } catch {
-      return err({
-        code: 'DEPENDENCY_UNAVAILABLE',
-        message: 'Failed to retrieve PDF bytes from object storage',
-      });
     }
+    return ok(fetched);
+  } catch {
+    return err({
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: 'Failed to retrieve PDF bytes from object storage',
+    });
+  }
+}
+
+async function resolvePdfBytes(
+  deps: IngestionServiceDeps,
+  parsed: ReturnType<typeof IngestPdfInputSchema.parse>,
+): Promise<Result<Uint8Array>> {
+  if (deps.fetchPdfBytes !== undefined) {
+    const storedResult = await loadStoredPdfBytes(
+      deps.fetchPdfBytes,
+      parsed.projectId,
+      parsed.localPdfFileId,
+    );
+    if (!storedResult.ok) {
+      return storedResult;
+    }
+    if (parsed.pdfBase64 !== undefined) {
+      const inlineBytes = Uint8Array.from(Buffer.from(parsed.pdfBase64, 'base64'));
+      if (sha256Hex(storedResult.value) !== sha256Hex(inlineBytes)) {
+        return err({
+          code: 'VALIDATION_ERROR',
+          message: 'Provided PDF bytes do not match stored project file',
+        });
+      }
+    }
+    return storedResult;
+  }
+  if (parsed.pdfBase64 !== undefined) {
+    return ok(Uint8Array.from(Buffer.from(parsed.pdfBase64, 'base64')));
   }
   return err({
     code: 'VALIDATION_ERROR',
@@ -439,11 +590,12 @@ async function safeHydrateByDoi(
 ): Promise<Result<HydratedDoiMatch | null>> {
   try {
     return ok(await hydrateByDoi(doi));
-  } catch {
-    return err({
-      code: 'DEPENDENCY_UNAVAILABLE',
-      message: `Failed to hydrate metadata for DOI ${doi}`,
-    });
+  } catch (error: unknown) {
+    const detail =
+      error instanceof Error && error.message.trim().length > 0
+        ? error.message.trim().slice(0, 300)
+        : `Failed to hydrate metadata for DOI ${doi}`;
+    return err({ code: 'DEPENDENCY_UNAVAILABLE', message: detail });
   }
 }
 
@@ -493,25 +645,33 @@ async function resolveHeuristicDraft(
   }
 }
 
-function toIngestPdfResponse(
-  outcome: ReturnType<typeof IngestPdfResponseSchema.parse>['status'],
-  extractionMethod: PdfExtractionMethod,
-  detectedDoi: string | null,
-  hydratedFrom: 'crossref' | 'openalex' | 'none',
-  byokFallbackUsed: boolean,
-  needsLlmFallback: boolean,
-  reference: Reference | null,
-  conflict: DuplicateReferenceConflict | null,
-): IngestPdfResponse {
+interface BuildIngestPdfResponseInput {
+  readonly status: ReturnType<typeof IngestPdfResponseSchema.parse>['status'];
+  readonly extractionMethod: PdfExtractionMethod;
+  readonly detectedDoi: string | null;
+  readonly hydratedFrom: 'crossref' | 'openalex' | 'none';
+  readonly byokFallbackUsed: boolean;
+  readonly needsLlmFallback: boolean;
+  readonly reference: Reference | null;
+  readonly conflict: DuplicateReferenceConflict | null;
+  readonly unverifiedCandidateDois?: readonly string[];
+}
+
+function toIngestPdfResponse(input: BuildIngestPdfResponseInput): IngestPdfResponse {
+  const unverified =
+    input.unverifiedCandidateDois && input.unverifiedCandidateDois.length > 0
+      ? input.unverifiedCandidateDois.slice(0, 20)
+      : undefined;
   return IngestPdfResponseSchema.parse({
-    status: outcome,
-    extractionMethod,
-    detectedDoi,
-    hydratedFrom,
-    byokFallbackUsed,
-    needsLlmFallback,
-    reference,
-    conflict,
+    status: input.status,
+    extractionMethod: input.extractionMethod,
+    detectedDoi: input.detectedDoi,
+    hydratedFrom: input.hydratedFrom,
+    byokFallbackUsed: input.byokFallbackUsed,
+    needsLlmFallback: input.needsLlmFallback,
+    ...(unverified !== undefined ? { unverifiedCandidateDois: unverified } : {}),
+    reference: input.reference,
+    conflict: input.conflict,
   });
 }
 
@@ -522,6 +682,7 @@ async function ingestPdfWithHeuristics(
   parsed: ReturnType<typeof IngestPdfInputSchema.parse>,
   extracted: ExtractedPdfContent,
   detectedDoi: string | null,
+  unverifiedCandidateDois: readonly string[],
 ): Promise<Result<IngestPdfResponse>> {
   const draftResult = await resolveHeuristicDraft(deps, parsed, extracted, detectedDoi);
   if (!draftResult.ok) {
@@ -555,37 +716,27 @@ async function ingestPdfWithHeuristics(
   const reference = created.value.status === 'conflict' ? null : created.value.reference;
   const conflict = created.value.status === 'conflict' ? created.value.conflict : null;
   return ok(
-    toIngestPdfResponse(
-      created.value.status,
-      draft.extractionMethod,
-      draft.finalDoi,
-      'none',
-      draft.byokFallbackUsed,
-      draft.needsLlmFallback,
+    toIngestPdfResponse({
+      status: created.value.status,
+      extractionMethod: draft.extractionMethod,
+      detectedDoi: draft.finalDoi,
+      hydratedFrom: 'none',
+      byokFallbackUsed: draft.byokFallbackUsed,
+      needsLlmFallback: draft.needsLlmFallback,
       reference,
       conflict,
-    ),
+      unverifiedCandidateDois,
+    }),
   );
 }
 
-async function tryIngestPdfFromDoi(
+async function persistHydratedPdfMatch(
   actor: IngestionActor,
-  deps: IngestionServiceDeps,
   referenceService: ReferenceService,
   parsed: ReturnType<typeof IngestPdfInputSchema.parse>,
-  detectedDoi: string | null,
-): Promise<Result<IngestPdfResponse> | null> {
-  if (detectedDoi === null) {
-    return null;
-  }
-  const hydratedResult = await safeHydrateByDoi(deps.hydrateByDoi, detectedDoi);
-  if (!hydratedResult.ok) {
-    return hydratedResult;
-  }
-  const hydrated = hydratedResult.value;
-  if (hydrated === null) {
-    return null;
-  }
+  detectedDoi: string,
+  hydrated: HydratedDoiMatch,
+): Promise<Result<IngestPdfResponse>> {
   const outcome = await referenceService.createReference(
     actor,
     buildReferenceInputFromCandidate(
@@ -604,17 +755,69 @@ async function tryIngestPdfFromDoi(
   const reference = outcome.value.status === 'conflict' ? null : outcome.value.reference;
   const conflict = outcome.value.status === 'conflict' ? outcome.value.conflict : null;
   return ok(
-    toIngestPdfResponse(
-      outcome.value.status,
-      'doi_hydrated',
+    toIngestPdfResponse({
+      status: outcome.value.status,
+      extractionMethod: 'doi_hydrated',
       detectedDoi,
-      hydrated.provider,
-      false,
-      false,
+      hydratedFrom: hydrated.provider,
+      byokFallbackUsed: false,
+      needsLlmFallback: false,
       reference,
       conflict,
-    ),
+    }),
   );
+}
+
+async function resolveVerifiedPdfDoi(
+  deps: IngestionServiceDeps,
+  extracted: ExtractedPdfContent,
+): Promise<
+  Result<{
+    readonly matchedDoi: string | null;
+    readonly hydrated: HydratedDoiMatch | null;
+    readonly xmpDoi: string | null;
+    readonly unverifiedCandidateDois: readonly string[];
+  }>
+> {
+  const xmpDoi = extracted.xmpDoi !== null ? normalizeDoi(extracted.xmpDoi) : null;
+  if (xmpDoi !== null) {
+    const hydratedResult = await safeHydrateByDoi(deps.hydrateByDoi, xmpDoi);
+    if (!hydratedResult.ok) {
+      return hydratedResult;
+    }
+    return ok({
+      matchedDoi: hydratedResult.value !== null ? xmpDoi : null,
+      hydrated: hydratedResult.value,
+      xmpDoi,
+      unverifiedCandidateDois: [],
+    });
+  }
+
+  const bodyDois = extractDoisFromText(extracted.text);
+  const candidatesToCheck = bodyDois.slice(0, MAX_BODY_DOIS_TO_VERIFY);
+  for (const candidateDoi of candidatesToCheck) {
+    const hydratedResult = await safeHydrateByDoi(deps.hydrateByDoi, candidateDoi);
+    if (!hydratedResult.ok) {
+      return hydratedResult;
+    }
+    if (
+      hydratedResult.value !== null &&
+      doesHydratedCandidateMatchPdf(hydratedResult.value.candidate, extracted)
+    ) {
+      return ok({
+        matchedDoi: candidateDoi,
+        hydrated: hydratedResult.value,
+        xmpDoi: null,
+        unverifiedCandidateDois: [],
+      });
+    }
+  }
+  return ok({
+    matchedDoi: null,
+    hydrated: null,
+    xmpDoi: null,
+    unverifiedCandidateDois: bodyDois.slice(0, 20),
+  });
 }
 
 interface BibliographyImportBuckets {
@@ -657,6 +860,45 @@ async function processSingleBibliographyEntry(
   } else if (created.value.status === 'conflict') {
     buckets.conflicts.push(created.value.conflict);
   }
+}
+
+async function runBibliographyEntryLoop(
+  actor: IngestionActor,
+  targetService: ReferenceService,
+  entries: readonly CSL[],
+  parsed: ReturnType<typeof ImportBibliographyInputSchema.parse>,
+  catchEntryThrows: boolean,
+): Promise<BibliographyImportBuckets> {
+  const buckets: BibliographyImportBuckets = {
+    imported: [],
+    merged: [],
+    conflicts: [],
+    errors: [],
+  };
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
+    if (!catchEntryThrows) {
+      await processSingleBibliographyEntry(actor, targetService, entry, index, parsed, buckets);
+      continue;
+    }
+    try {
+      await processSingleBibliographyEntry(actor, targetService, entry, index, parsed, buckets);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message.trim().slice(0, 480)
+          : 'Unexpected persistence error while importing entry';
+      buckets.errors.push({
+        entryIndex: index,
+        rawCiteKey: readCslOptionalString(entry['citation-key']),
+        message,
+      });
+    }
+  }
+  return buckets;
 }
 
 function toIngestDoiResponse(
@@ -737,35 +979,35 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
           message: parsed.error.issues[0]?.message ?? 'Invalid bibliography import payload',
         });
       }
-      const entriesResult = parseBibliographyEntries(parsed.data.content);
+      const entriesResult = parseBibliographyEntries(parsed.data.content, parsed.data.format);
       if (!entriesResult.ok) {
         return entriesResult;
       }
-      const buckets: BibliographyImportBuckets = {
-        imported: [],
-        merged: [],
-        conflicts: [],
-        errors: [],
-      };
-      for (let index = 0; index < entriesResult.value.length; index += 1) {
-        const entry = entriesResult.value[index];
-        if (entry) {
-          await processSingleBibliographyEntry(
-            actor,
-            referenceService,
-            entry,
-            index,
-            parsed.data,
-            buckets,
-          );
-        }
+      try {
+        const buckets = referenceService.runBatch
+          ? await referenceService.runBatch((txService) =>
+              runBibliographyEntryLoop(actor, txService, entriesResult.value, parsed.data, false),
+            )
+          : await runBibliographyEntryLoop(
+              actor,
+              referenceService,
+              entriesResult.value,
+              parsed.data,
+              true,
+            );
+        return ok(
+          ImportBibliographyResponseSchema.parse({
+            format: parsed.data.format,
+            ...buckets,
+          }),
+        );
+      } catch {
+        return err({
+          code: 'DEPENDENCY_UNAVAILABLE',
+          message:
+            'Bibliography import transaction failed and was rolled back; safe to retry batch',
+        });
       }
-      return ok(
-        ImportBibliographyResponseSchema.parse({
-          format: parsed.data.format,
-          ...buckets,
-        }),
-      );
     },
 
     exportBibliography: async (actor, input): Promise<Result<ExportBibliographyResponse>> => {
@@ -838,16 +1080,13 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
         return extractedResult;
       }
       const extracted = extractedResult.value;
-      const detectedDoi = extractCandidateDoisFromPdf(extracted)[0] ?? null;
-      const hydratedOutcome = await tryIngestPdfFromDoi(
-        actor,
-        deps,
-        referenceService,
-        parsed.data,
-        detectedDoi,
-      );
-      if (hydratedOutcome !== null) {
-        return hydratedOutcome;
+      const doiResolution = await resolveVerifiedPdfDoi(deps, extracted);
+      if (!doiResolution.ok) {
+        return doiResolution;
+      }
+      const { matchedDoi, hydrated, xmpDoi, unverifiedCandidateDois } = doiResolution.value;
+      if (matchedDoi !== null && hydrated !== null) {
+        return persistHydratedPdfMatch(actor, referenceService, parsed.data, matchedDoi, hydrated);
       }
       return ingestPdfWithHeuristics(
         actor,
@@ -855,7 +1094,8 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
         referenceService,
         parsed.data,
         extracted,
-        detectedDoi,
+        xmpDoi,
+        unverifiedCandidateDois,
       );
     },
   };
@@ -987,15 +1227,18 @@ async function fetchCrossrefDoiCandidate(
   contactEmail: string,
   headers: Readonly<Record<string, string>>,
   fetchFn: typeof fetch,
-): Promise<HydratedDoiMatch | null> {
+): Promise<DoiLookupOutcome> {
   const crossrefUrl = `https://api.crossref.org/works/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(contactEmail)}`;
   try {
     const response = await fetchFn(crossrefUrl, {
       headers,
       signal: AbortSignal.timeout(8000),
     });
+    if (response.status === 404 || response.status === 410) {
+      return { kind: 'not_found' };
+    }
     if (!response.ok) {
-      return null;
+      return { kind: 'unavailable', reason: `Crossref returned HTTP ${response.status}` };
     }
     const body: unknown = await response.json();
     const message =
@@ -1003,9 +1246,12 @@ async function fetchCrossrefDoiCandidate(
         ? Reflect.get(body, 'message')
         : null;
     const candidate = parseCrossrefWork(message);
-    return candidate !== null ? { provider: 'crossref', candidate } : null;
-  } catch {
-    return null;
+    return candidate !== null
+      ? { kind: 'found', match: { provider: 'crossref', candidate } }
+      : { kind: 'not_found' };
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : 'Crossref request failed';
+    return { kind: 'unavailable', reason };
   }
 }
 
@@ -1014,21 +1260,27 @@ async function fetchOpenAlexDoiCandidate(
   contactEmail: string,
   headers: Readonly<Record<string, string>>,
   fetchFn: typeof fetch,
-): Promise<HydratedDoiMatch | null> {
+): Promise<DoiLookupOutcome> {
   const openAlexUrl = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(contactEmail)}`;
   try {
     const response = await fetchFn(openAlexUrl, {
       headers,
       signal: AbortSignal.timeout(8000),
     });
+    if (response.status === 404 || response.status === 410) {
+      return { kind: 'not_found' };
+    }
     if (!response.ok) {
-      return null;
+      return { kind: 'unavailable', reason: `OpenAlex returned HTTP ${response.status}` };
     }
     const body: unknown = await response.json();
     const candidate = parseOpenAlexWork(body);
-    return candidate !== null ? { provider: 'openalex', candidate } : null;
-  } catch {
-    return null;
+    return candidate !== null
+      ? { kind: 'found', match: { provider: 'openalex', candidate } }
+      : { kind: 'not_found' };
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : 'OpenAlex request failed';
+    return { kind: 'unavailable', reason };
   }
 }
 
@@ -1042,10 +1294,21 @@ export function createDefaultDoiHydrator(
   };
 
   return async (doi: string): Promise<HydratedDoiMatch | null> => {
-    const crossrefMatch = await fetchCrossrefDoiCandidate(doi, contactEmail, headers, fetchFn);
-    if (crossrefMatch !== null) {
-      return crossrefMatch;
+    const crossrefOutcome = await fetchCrossrefDoiCandidate(doi, contactEmail, headers, fetchFn);
+    if (crossrefOutcome.kind === 'found') {
+      return crossrefOutcome.match;
     }
-    return fetchOpenAlexDoiCandidate(doi, contactEmail, headers, fetchFn);
+    const openAlexOutcome = await fetchOpenAlexDoiCandidate(doi, contactEmail, headers, fetchFn);
+    if (openAlexOutcome.kind === 'found') {
+      return openAlexOutcome.match;
+    }
+    if (crossrefOutcome.kind === 'unavailable' || openAlexOutcome.kind === 'unavailable') {
+      const reasons = [
+        ...(crossrefOutcome.kind === 'unavailable' ? [crossrefOutcome.reason] : []),
+        ...(openAlexOutcome.kind === 'unavailable' ? [openAlexOutcome.reason] : []),
+      ];
+      throw new Error(`DOI metadata providers unavailable: ${reasons.join('; ')}`);
+    }
+    return null;
   };
 }

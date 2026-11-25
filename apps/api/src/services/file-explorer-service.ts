@@ -92,7 +92,9 @@ export interface FileExplorerService {
       readonly limit?: number;
     },
   ) => Promise<Result<ProjectFileNode[]>>;
-  readonly hasFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly hasFileInProject: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly hasPdfFileInProject: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly readFileBytes: (projectId: string, fileId: string) => Promise<Uint8Array | null>;
 }
 
 const TEXT_PREVIEW_KINDS: ReadonlySet<FileKind> = new Set([
@@ -912,6 +914,33 @@ export function createFileExplorerService(
     hasFileInProject: async (projectId, fileId): Promise<boolean> => {
       const node = nodes.get(fileId);
       return Boolean(node && node.projectId === projectId && node.deletedAt === null);
+    },
+
+    hasPdfFileInProject: async (projectId, fileId): Promise<boolean> => {
+      const node = nodes.get(fileId);
+      if (!node || node.projectId !== projectId || node.deletedAt !== null) {
+        return false;
+      }
+      if (node.isFolder || node.s3Key === null) {
+        return false;
+      }
+      return (
+        node.kind === 'pdf' ||
+        node.mimeType.toLowerCase() === 'application/pdf' ||
+        node.name.toLowerCase().endsWith('.pdf')
+      );
+    },
+
+    readFileBytes: async (projectId, fileId): Promise<Uint8Array | null> => {
+      const node = nodes.get(fileId);
+      if (!node || node.projectId !== projectId || node.deletedAt !== null) {
+        return null;
+      }
+      if (node.isFolder || node.s3Key === null) {
+        return null;
+      }
+      const bytes = await storage.getObject(node.s3Key);
+      return bytes !== null ? new Uint8Array(bytes) : null;
     },
   };
 }

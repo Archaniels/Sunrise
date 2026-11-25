@@ -5,6 +5,7 @@ import {
   PdfCopyCitationPayloadSchema,
   PdfDeepLinkTargetSchema,
   PdfViewerStateSchema,
+  PHASE2_IPC_EVENT_CHANNELS,
   type GetPdfViewerStateInput,
   type OkBooleanOutput,
   type PdfCopyCitationPayload,
@@ -12,6 +13,24 @@ import {
   type PdfViewerState,
   type Result,
 } from '@sunrise/shared';
+
+export interface DeepLinkTargetWindow {
+  readonly isDestroyed: () => boolean;
+  readonly webContents: {
+    readonly send: (channel: string, payload: unknown) => void;
+  };
+}
+
+export function createDeepLinkBroadcaster(
+  getWindow: () => DeepLinkTargetWindow | null,
+): (target: PdfDeepLinkTarget) => void {
+  return (target: PdfDeepLinkTarget): void => {
+    const win = getWindow();
+    if (win !== null && !win.isDestroyed()) {
+      win.webContents.send(PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED, target);
+    }
+  };
+}
 
 export interface Phase2DesktopServiceDeps {
   readonly writeClipboardText: (text: string) => void;

@@ -19,7 +19,10 @@ import {
 } from './services/keychain-session-service.js';
 import { createInMemoryLayoutStoreService } from './services/layout-store-service.js';
 import { createNativeFsService } from './services/native-fs-service.js';
-import { createPhase2DesktopService } from './services/phase2-desktop-service.js';
+import {
+  createDeepLinkBroadcaster,
+  createPhase2DesktopService,
+} from './services/phase2-desktop-service.js';
 import { createDesktopServices } from './services/system-service.js';
 import {
   applyCspToResponseHeaders,
@@ -182,6 +185,7 @@ export async function startDesktopApp(): Promise<void> {
     writeClipboardText: (text: string) => {
       clipboard.writeText(text);
     },
+    onDeepLinkOpened: createDeepLinkBroadcaster(() => mainWindow),
   });
 
   cleanupRegisteredIpc?.();

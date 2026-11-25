@@ -76,6 +76,7 @@ export interface ReferenceService {
     projectId: string,
     referenceId: string,
   ) => Promise<Result<{ readonly deleted: true }>>;
+  readonly runBatch?: <T>(fn: (txService: ReferenceService) => Promise<T>) => Promise<T>;
 }
 
 type ParsedCreateInput = ReturnType<typeof CreateReferenceInputSchema.parse>;
@@ -146,20 +147,78 @@ function mergeNotes(current: string, incoming: string): string {
   return `${current}\n\n${incoming}`.slice(0, 50000);
 }
 
-function detectConflictingFields(existing: Reference, incoming: ParsedCreateInput): string[] {
-  const checks: ReadonlyArray<readonly [string, boolean]> = [
+function normalizeAuthorTuple(author: ReferenceAuthor): string {
+  const family = author.family.trim().toLowerCase();
+  const given = author.given.trim().toLowerCase();
+  const display = author.displayName.trim().toLowerCase();
+  const orcid = (author.orcid ?? '').trim().toLowerCase();
+  return `${family}|${given}|${display}|${orcid}`;
+}
+
+function areAuthorsEqual(
+  existing: readonly ReferenceAuthor[],
+  incoming: readonly ReferenceAuthor[],
+): boolean {
+  if (existing.length !== incoming.length) {
+    return false;
+  }
+  return existing.every((author, index) => {
+    const other = incoming[index];
+    return other !== undefined && normalizeAuthorTuple(author) === normalizeAuthorTuple(other);
+  });
+}
+
+function areTagSetsEqual(existing: readonly string[], incoming: readonly string[]): boolean {
+  const existingSet = new Set(existing.map((tag) => tag.trim().toLowerCase()).filter(Boolean));
+  const incomingSet = new Set(incoming.map((tag) => tag.trim().toLowerCase()).filter(Boolean));
+  if (existingSet.size !== incomingSet.size) {
+    return false;
+  }
+  for (const tag of incomingSet) {
+    if (!existingSet.has(tag)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function hasIncomingNonNullConflict<T>(incoming: T | null, existing: T | null): boolean {
+  return incoming !== null && incoming !== existing;
+}
+
+function detectScalarFieldConflicts(existing: Reference, incoming: ParsedCreateInput): string[] {
+  const pairs: ReadonlyArray<readonly [string, boolean]> = [
     ['title', incoming.title !== existing.title],
-    ['year', incoming.year !== null && incoming.year !== existing.year],
-    ['journal', incoming.journal !== null && incoming.journal !== existing.journal],
-    ['abstract', incoming.abstract !== null && incoming.abstract !== existing.abstract],
+    ['year', hasIncomingNonNullConflict(incoming.year, existing.year)],
+    ['journal', hasIncomingNonNullConflict(incoming.journal, existing.journal)],
+    ['published', hasIncomingNonNullConflict(incoming.published, existing.published)],
+    ['url', hasIncomingNonNullConflict(incoming.url, existing.url)],
+    ['abstract', hasIncomingNonNullConflict(incoming.abstract, existing.abstract)],
+    ['volume', hasIncomingNonNullConflict(incoming.volume, existing.volume)],
+    ['issue', hasIncomingNonNullConflict(incoming.issue, existing.issue)],
+    ['pages', hasIncomingNonNullConflict(incoming.pages, existing.pages)],
+    ['citationCount', hasIncomingNonNullConflict(incoming.citationCount, existing.citationCount)],
+    ['pdfUrl', hasIncomingNonNullConflict(incoming.pdfUrl, existing.pdfUrl)],
     [
-      'citationCount',
-      incoming.citationCount !== null && incoming.citationCount !== existing.citationCount,
+      'localPdfFileId',
+      hasIncomingNonNullConflict(incoming.localPdfFileId, existing.localPdfFileId),
     ],
-    ['pdfUrl', incoming.pdfUrl !== null && incoming.pdfUrl !== existing.pdfUrl],
-    ['notes', incoming.notes.trim().length > 0 && incoming.notes !== existing.notes],
   ];
-  return checks.filter(([, isDiff]) => isDiff).map(([field]) => field);
+  return pairs.filter(([, isDiff]) => isDiff).map(([field]) => field);
+}
+
+function detectConflictingFields(existing: Reference, incoming: ParsedCreateInput): string[] {
+  const conflicts = detectScalarFieldConflicts(existing, incoming);
+  if (incoming.authors.length > 0 && !areAuthorsEqual(existing.authors, incoming.authors)) {
+    conflicts.push('authors');
+  }
+  if (incoming.tags.length > 0 && !areTagSetsEqual(existing.tags, incoming.tags)) {
+    conflicts.push('tags');
+  }
+  if (incoming.notes.trim().length > 0 && incoming.notes !== existing.notes) {
+    conflicts.push('notes');
+  }
+  return conflicts;
 }
 
 function buildDuplicateConflict(
@@ -411,11 +470,11 @@ function applyReferencePatch(
   });
 }
 
-export function createInMemoryReferenceRepository(): ReferenceRepository {
-  const store = new Map<string, Reference>();
-  let txQueue: Promise<void> = Promise.resolve();
-
-  const repo: ReferenceRepository = {
+function buildInMemoryReferenceMethods(
+  store: Map<string, Reference>,
+  runInTransaction: <T>(fn: (txRepo: ReferenceRepository) => Promise<T>) => Promise<T>,
+): ReferenceRepository {
+  return {
     findById: async (referenceId) => store.get(referenceId) ?? null,
     findByProjectAndDoi: async (projectId, doi) => {
       for (const ref of store.values()) {
@@ -445,22 +504,46 @@ export function createInMemoryReferenceRepository(): ReferenceRepository {
       }
       return store.delete(referenceId);
     },
-    runInTransaction: async <T>(fn: (txRepo: ReferenceRepository) => Promise<T>): Promise<T> => {
-      const previous = txQueue;
-      let release: () => void = () => undefined;
-      txQueue = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      await previous;
-      try {
-        return await fn(repo);
-      } finally {
-        release();
-      }
-    },
+    runInTransaction,
+  };
+}
+
+function restoreMapSnapshot<K, V>(target: Map<K, V>, snapshot: ReadonlyMap<K, V>): void {
+  target.clear();
+  for (const [key, value] of snapshot.entries()) {
+    target.set(key, value);
+  }
+}
+
+export function createInMemoryReferenceRepository(): ReferenceRepository {
+  const store = new Map<string, Reference>();
+  let txQueue: Promise<void> = Promise.resolve();
+
+  const nestedTx = async <T>(fn: (txRepo: ReferenceRepository) => Promise<T>): Promise<T> =>
+    fn(txScopedRepo);
+  const txScopedRepo: ReferenceRepository = buildInMemoryReferenceMethods(store, nestedTx);
+
+  const runInTransaction = async <T>(
+    fn: (txRepo: ReferenceRepository) => Promise<T>,
+  ): Promise<T> => {
+    const previous = txQueue;
+    let release: () => void = () => undefined;
+    txQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    const snapshot = new Map(store);
+    try {
+      return await fn(txScopedRepo);
+    } catch (error: unknown) {
+      restoreMapSnapshot(store, snapshot);
+      throw error;
+    } finally {
+      release();
+    }
   };
 
-  return repo;
+  return buildInMemoryReferenceMethods(store, runInTransaction);
 }
 
 async function checkUpdateConflicts(
@@ -503,14 +586,29 @@ async function verifyOptionalProjectFile(
   projectId: string,
   fileId: string | null | undefined,
 ): Promise<Result<true>> {
-  if (!fileId || !assertFileInProject) {
+  if (!fileId) {
     return ok(true);
+  }
+  if (!assertFileInProject) {
+    return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
   }
   const owned = await assertFileInProject(projectId, fileId);
   if (!owned) {
     return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
   }
   return ok(true);
+}
+
+function createInMemoryOwnershipBinder(): (projectId: string, id: string) => Promise<boolean> {
+  const owners = new Map<string, string>();
+  return async (projectId: string, id: string): Promise<boolean> => {
+    const existingOwner = owners.get(id);
+    if (existingOwner === undefined) {
+      owners.set(id, projectId);
+      return true;
+    }
+    return existingOwner === projectId;
+  };
 }
 
 export function createReferenceService(
@@ -728,17 +826,28 @@ export function createReferenceService(
       if (!UuidSchema.safeParse(projectId).success || !UuidSchema.safeParse(referenceId).success) {
         return err({ code: 'VALIDATION_ERROR', message: 'Invalid projectId or referenceId' });
       }
-      const deleted = await repo.deleteById(projectId, referenceId);
-      if (!deleted) {
-        return err({ code: 'NOT_FOUND', message: 'Reference not found' });
-      }
-      return ok({ deleted: true });
+      return executeInReferenceTransaction(repo, async (txRepo) => {
+        await txRepo.lockProject?.(projectId);
+        const deleted = await txRepo.deleteById(projectId, referenceId);
+        if (!deleted) {
+          return err({ code: 'NOT_FOUND', message: 'Reference not found' });
+        }
+        return ok({ deleted: true });
+      });
     },
+
+    runBatch: async <T>(fn: (txService: ReferenceService) => Promise<T>): Promise<T> =>
+      executeInReferenceTransaction(repo, (txRepo) => fn(createReferenceService(txRepo, options))),
   };
 }
 
 export function createInMemoryReferenceService(
   nowOrOptions?: (() => Date) | ReferenceServiceOptions,
 ): ReferenceService {
-  return createReferenceService(createInMemoryReferenceRepository(), nowOrOptions);
+  const baseOptions = resolveReferenceServiceOptions(nowOrOptions);
+  const resolvedOptions: ReferenceServiceOptions = {
+    ...baseOptions,
+    assertFileInProject: baseOptions.assertFileInProject ?? createInMemoryOwnershipBinder(),
+  };
+  return createReferenceService(createInMemoryReferenceRepository(), resolvedOptions);
 }

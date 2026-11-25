@@ -32,29 +32,26 @@ function buildPhase2OwnershipGuards(
   fileExplorerService: FileExplorerService,
   referenceService?: ReferenceService,
 ): {
-  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
-  readonly assertReferenceInProject?: (projectId: string, referenceId: string) => Promise<boolean>;
+  readonly assertFileInProject: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly readFileBytes: (projectId: string, fileId: string) => Promise<Uint8Array | null>;
+  readonly assertReferenceInProject: (projectId: string, referenceId: string) => Promise<boolean>;
 } {
-  const hasFileInProject = fileExplorerService.hasFileInProject;
   return {
-    ...(hasFileInProject
-      ? {
-          assertFileInProject: (projectId: string, fileId: string) =>
-            hasFileInProject(projectId, fileId),
-        }
-      : {}),
-    ...(referenceService
-      ? {
-          assertReferenceInProject: async (projectId: string, referenceId: string) => {
-            const result = await referenceService.getReference(
-              { userId: '00000000-0000-4000-8000-000000000000', role: 'viewer' },
-              projectId,
-              referenceId,
-            );
-            return result.ok;
-          },
-        }
-      : {}),
+    assertFileInProject: (projectId: string, fileId: string) =>
+      fileExplorerService.hasPdfFileInProject(projectId, fileId),
+    readFileBytes: (projectId: string, fileId: string) =>
+      fileExplorerService.readFileBytes(projectId, fileId),
+    assertReferenceInProject: async (projectId: string, referenceId: string) => {
+      if (!referenceService) {
+        return false;
+      }
+      const result = await referenceService.getReference(
+        { userId: '00000000-0000-4000-8000-000000000000', role: 'viewer' },
+        projectId,
+        referenceId,
+      );
+      return result.ok;
+    },
   };
 }
 

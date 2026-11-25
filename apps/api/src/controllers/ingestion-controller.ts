@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ExportBibliographyInputSchema,
   ImportBibliographyInputSchema,
@@ -50,12 +51,19 @@ function resolveIngestionStatusCode(status: string): number {
   return status === 'created' ? 201 : 200;
 }
 
+const PDF_INGESTION_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
+
 export interface IngestionRouteGuardOptions {
   readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly readFileBytes?: (projectId: string, fileId: string) => Promise<Uint8Array | null>;
 }
 
 function readObjectBody(body: unknown): object {
   return typeof body === 'object' && body !== null ? body : {};
+}
+
+function sha256Digest(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 async function ensureIngestionFileOwned(
@@ -65,7 +73,8 @@ async function ensureIngestionFileOwned(
   fileId: string,
 ): Promise<boolean> {
   if (!guards?.assertFileInProject) {
-    return true;
+    sendErrorReply(reply, 'NOT_FOUND', 'File not found in project');
+    return false;
   }
   const owned = await guards.assertFileInProject(projectId, fileId);
   if (!owned) {
@@ -73,6 +82,42 @@ async function ensureIngestionFileOwned(
     return false;
   }
   return true;
+}
+
+async function verifyInlinePdfMatchesStoredFile(
+  reply: FastifyReply,
+  guards: IngestionRouteGuardOptions | undefined,
+  projectId: string,
+  fileId: string,
+  pdfBase64: string | undefined,
+): Promise<boolean> {
+  if (pdfBase64 === undefined || !guards?.readFileBytes) {
+    return true;
+  }
+  try {
+    const storedBytes = await guards.readFileBytes(projectId, fileId);
+    if (storedBytes === null) {
+      sendErrorReply(reply, 'NOT_FOUND', 'File not found in project');
+      return false;
+    }
+    const inlineBytes = Uint8Array.from(Buffer.from(pdfBase64, 'base64'));
+    if (sha256Digest(storedBytes) !== sha256Digest(inlineBytes)) {
+      sendErrorReply(
+        reply,
+        'VALIDATION_ERROR',
+        'Provided PDF bytes do not match stored project file',
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    sendErrorReply(
+      reply,
+      'DEPENDENCY_UNAVAILABLE',
+      'Failed to verify PDF bytes against object storage',
+    );
+    return false;
+  }
 }
 
 export function registerIngestionRoutes(
@@ -178,37 +223,51 @@ export function registerIngestionRoutes(
     return reply.code(200).send(result);
   });
 
-  app.post('/projects/:projectId/ingestion/pdf', async (request, reply) => {
-    const projectId = readUuidParam(request.params, 'projectId');
-    if (!projectId) {
-      return sendErrorReply(reply, 'VALIDATION_ERROR', 'Invalid projectId parameter');
-    }
-    const actor = await resolveIngestionActor(
-      request,
-      reply,
-      authService,
-      projectService,
-      projectId,
-      'write_files',
-    );
-    if (!actor) {
-      return reply;
-    }
-    const parsed = IngestPdfInputSchema.safeParse({ ...readObjectBody(request.body), projectId });
-    if (!parsed.success) {
-      return sendErrorReply(
+  app.post(
+    '/projects/:projectId/ingestion/pdf',
+    { bodyLimit: PDF_INGESTION_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const projectId = readUuidParam(request.params, 'projectId');
+      if (!projectId) {
+        return sendErrorReply(reply, 'VALIDATION_ERROR', 'Invalid projectId parameter');
+      }
+      const actor = await resolveIngestionActor(
+        request,
         reply,
-        'VALIDATION_ERROR',
-        parsed.error.issues[0]?.message ?? 'Invalid PDF ingestion payload',
+        authService,
+        projectService,
+        projectId,
+        'write_files',
       );
-    }
-    if (!(await ensureIngestionFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
-      return reply;
-    }
-    const result = await ingestionService.ingestPdf(actor, parsed.data);
-    if (!result.ok) {
-      return sendErrorReply(reply, result.error.code, result.error.message);
-    }
-    return reply.code(resolveIngestionStatusCode(result.value.status)).send(result);
-  });
+      if (!actor) {
+        return reply;
+      }
+      const parsed = IngestPdfInputSchema.safeParse({ ...readObjectBody(request.body), projectId });
+      if (!parsed.success) {
+        return sendErrorReply(
+          reply,
+          'VALIDATION_ERROR',
+          parsed.error.issues[0]?.message ?? 'Invalid PDF ingestion payload',
+        );
+      }
+      if (!(await ensureIngestionFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
+        return reply;
+      }
+      const bytesMatch = await verifyInlinePdfMatchesStoredFile(
+        reply,
+        guards,
+        projectId,
+        parsed.data.localPdfFileId,
+        parsed.data.pdfBase64,
+      );
+      if (!bytesMatch) {
+        return reply;
+      }
+      const result = await ingestionService.ingestPdf(actor, parsed.data);
+      if (!result.ok) {
+        return sendErrorReply(reply, result.error.code, result.error.message);
+      }
+      return reply.code(resolveIngestionStatusCode(result.value.status)).send(result);
+    },
+  );
 }

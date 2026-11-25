@@ -21,10 +21,21 @@ export interface PdfActor {
   readonly role: ProjectRole;
 }
 
+export interface PdfAnnotationUpdatePatch {
+  readonly note?: string;
+  readonly color?: PdfAnnotation['color'];
+  readonly updatedAt: string;
+}
+
 export interface PdfAnnotationRepository {
   readonly findById: (annotationId: string) => Promise<PdfAnnotation | null>;
   readonly listByFile: (projectId: string, fileId: string) => Promise<PdfAnnotation[]>;
-  readonly save: (annotation: PdfAnnotation) => Promise<PdfAnnotation>;
+  readonly insert: (annotation: PdfAnnotation) => Promise<PdfAnnotation>;
+  readonly update: (
+    projectId: string,
+    annotationId: string,
+    patch: PdfAnnotationUpdatePatch,
+  ) => Promise<PdfAnnotation | null>;
   readonly deleteById: (projectId: string, annotationId: string) => Promise<boolean>;
 }
 
@@ -70,9 +81,23 @@ export function createInMemoryPdfAnnotationRepository(): PdfAnnotationRepository
       }
       return results;
     },
-    save: async (annotation) => {
+    insert: async (annotation) => {
       store.set(annotation.id, annotation);
       return annotation;
+    },
+    update: async (projectId, annotationId, patch) => {
+      const existing = store.get(annotationId);
+      if (!existing || existing.projectId !== projectId) {
+        return null;
+      }
+      const updated = PdfAnnotationSchema.parse({
+        ...existing,
+        note: patch.note ?? existing.note,
+        color: patch.color ?? existing.color,
+        updatedAt: patch.updatedAt,
+      });
+      store.set(annotationId, updated);
+      return updated;
     },
     deleteById: async (projectId, annotationId) => {
       const existing = store.get(annotationId);
@@ -103,19 +128,35 @@ async function verifyAnnotationOwnership(
   fileId: string,
   referenceId: string | null | undefined,
 ): Promise<Result<true>> {
-  if (options.assertFileInProject) {
-    const fileAllowed = await options.assertFileInProject(projectId, fileId);
-    if (!fileAllowed) {
-      return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
-    }
+  if (!options.assertFileInProject) {
+    return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
   }
-  if (referenceId && options.assertReferenceInProject) {
+  const fileAllowed = await options.assertFileInProject(projectId, fileId);
+  if (!fileAllowed) {
+    return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
+  }
+  if (referenceId) {
+    if (!options.assertReferenceInProject) {
+      return err({ code: 'NOT_FOUND', message: 'Reference not found in this project' });
+    }
     const refAllowed = await options.assertReferenceInProject(projectId, referenceId);
     if (!refAllowed) {
       return err({ code: 'NOT_FOUND', message: 'Reference not found in this project' });
     }
   }
   return ok(true);
+}
+
+function createInMemoryOwnershipBinder(): (projectId: string, id: string) => Promise<boolean> {
+  const owners = new Map<string, string>();
+  return async (projectId: string, id: string): Promise<boolean> => {
+    const existingOwner = owners.get(id);
+    if (existingOwner === undefined) {
+      owners.set(id, projectId);
+      return true;
+    }
+    return existingOwner === projectId;
+  };
 }
 
 export function createPdfAnnotationService(
@@ -164,7 +205,7 @@ export function createPdfAnnotationService(
         createdAt: nowIso,
         updatedAt: nowIso,
       });
-      await repo.save(created);
+      await repo.insert(created);
       return ok(created);
     },
 
@@ -222,17 +263,14 @@ export function createPdfAnnotationService(
           message: parsed.error.issues[0]?.message ?? 'Invalid PDF annotation update payload',
         });
       }
-      const existing = await repo.findById(annotationId);
-      if (!existing || existing.projectId !== projectId) {
-        return err({ code: 'NOT_FOUND', message: 'PDF annotation not found' });
-      }
-      const updated = PdfAnnotationSchema.parse({
-        ...existing,
-        note: parsed.data.note ?? existing.note,
-        color: parsed.data.color ?? existing.color,
+      const updated = await repo.update(projectId, annotationId, {
+        ...(parsed.data.note !== undefined ? { note: parsed.data.note } : {}),
+        ...(parsed.data.color !== undefined ? { color: parsed.data.color } : {}),
         updatedAt: now().toISOString(),
       });
-      await repo.save(updated);
+      if (!updated) {
+        return err({ code: 'NOT_FOUND', message: 'PDF annotation not found' });
+      }
       return ok(updated);
     },
 
@@ -259,5 +297,12 @@ export function createPdfAnnotationService(
 export function createInMemoryPdfAnnotationService(
   nowOrOptions?: (() => Date) | PdfAnnotationServiceOptions,
 ): PdfAnnotationService {
-  return createPdfAnnotationService(createInMemoryPdfAnnotationRepository(), nowOrOptions);
+  const baseOptions = resolveAnnotationServiceOptions(nowOrOptions);
+  const resolvedOptions: PdfAnnotationServiceOptions = {
+    ...baseOptions,
+    assertFileInProject: baseOptions.assertFileInProject ?? createInMemoryOwnershipBinder(),
+    assertReferenceInProject:
+      baseOptions.assertReferenceInProject ?? createInMemoryOwnershipBinder(),
+  };
+  return createPdfAnnotationService(createInMemoryPdfAnnotationRepository(), resolvedOptions);
 }

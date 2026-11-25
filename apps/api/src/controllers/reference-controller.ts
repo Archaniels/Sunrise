@@ -136,8 +136,12 @@ async function ensureOptionalFileOwned(
   projectId: string,
   fileId: string | null | undefined,
 ): Promise<boolean> {
-  if (!fileId || !guards?.assertFileInProject) {
+  if (!fileId) {
     return true;
+  }
+  if (!guards?.assertFileInProject) {
+    sendErrorReply(reply, 'NOT_FOUND', 'PDF file not found in this project');
+    return false;
   }
   const allowed = await guards.assertFileInProject(projectId, fileId);
   if (!allowed) {

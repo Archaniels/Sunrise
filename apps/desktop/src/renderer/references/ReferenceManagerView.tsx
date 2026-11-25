@@ -70,7 +70,19 @@ export function ReferenceManagerView({
       {
         accessorKey: 'title',
         header: 'Title',
-        cell: ({ row }) => <span className="font-medium text-slate-100">{row.original.title}</span>,
+        cell: ({ row }) => (
+          <button
+            type="button"
+            aria-pressed={row.original.id === viewState.selectedReferenceId}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectReference(row.original.id);
+            }}
+            className="text-left font-medium text-slate-100 hover:text-indigo-300 focus:underline focus:outline-none"
+          >
+            {row.original.title}
+          </button>
+        ),
       },
       {
         id: 'authors',
@@ -96,6 +108,7 @@ export function ReferenceManagerView({
       {
         id: 'pdf',
         header: 'PDF',
+        enableSorting: false,
         cell: ({ row }) => {
           const hasPdf = row.original.localPdfFileId !== null || row.original.pdfUrl !== null;
           return hasPdf ? (
@@ -106,7 +119,7 @@ export function ReferenceManagerView({
         },
       },
     ],
-    [],
+    [onSelectReference, viewState.selectedReferenceId],
   );
 
   const tableData = useMemo(() => [...references], [references]);
@@ -169,15 +182,33 @@ export function ReferenceManagerView({
           <thead className="border-b border-slate-800 bg-slate-900 text-xs uppercase text-slate-400">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    onClick={header.column.getToggleSortingHandler()}
-                    className="cursor-pointer px-3 py-2 font-semibold"
-                  >
-                    <table.FlexRender header={header} />
-                  </th>
-                ))}
+                {headerGroup.headers.map((header) => {
+                  const canSort = header.column.getCanSort();
+                  const sortDirection = header.column.getIsSorted();
+                  const ariaSort =
+                    sortDirection === 'asc'
+                      ? 'ascending'
+                      : sortDirection === 'desc'
+                        ? 'descending'
+                        : canSort
+                          ? 'none'
+                          : undefined;
+                  return (
+                    <th key={header.id} aria-sort={ariaSort} className="px-3 py-2 font-semibold">
+                      {canSort ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          className="flex w-full items-center gap-1 text-left font-semibold uppercase hover:text-slate-200 focus:underline focus:outline-none"
+                        >
+                          <table.FlexRender header={header} />
+                        </button>
+                      ) : (
+                        <table.FlexRender header={header} />
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>

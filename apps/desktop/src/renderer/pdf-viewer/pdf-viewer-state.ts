@@ -7,9 +7,11 @@ import {
   clampPdfZoom,
   PDF_DEFAULT_ZOOM,
   PdfViewerStateSchema,
+  type IpcUnsubscribe,
   type PdfAskRavenPayload,
   type PdfCopyCitationPayload,
   type PdfCreateNotePayload,
+  type PdfDeepLinkOpenedListener,
   type PdfDeepLinkTarget,
   type PdfHighlightColor,
   type PdfSearchMatch,
@@ -125,13 +127,15 @@ export function createPdfViewerController(init: PdfViewerControllerInit): PdfVie
     },
 
     openDeepLink: (target): PdfViewerState => {
+      const boundedQuery =
+        target.searchExcerpt !== null ? target.searchExcerpt.slice(0, 300) : state.searchQuery;
       state = PdfViewerStateSchema.parse({
         ...state,
         projectId: target.projectId,
         fileId: target.fileId,
         referenceId: target.referenceId,
         currentPage: clampPdfPage(target.pageNumber, state.totalPages),
-        searchQuery: target.searchExcerpt ?? state.searchQuery,
+        searchQuery: boundedQuery,
       });
       return snapshot();
     },
@@ -162,4 +166,15 @@ export function createPdfViewerController(init: PdfViewerControllerInit): PdfVie
       return buildPdfAskRavenPayload(selection);
     },
   };
+}
+
+export function bindDeepLinkSubscription(
+  controller: PdfViewerController,
+  subscribe: (listener: PdfDeepLinkOpenedListener) => IpcUnsubscribe,
+  onUpdate?: (nextState: PdfViewerState, target: PdfDeepLinkTarget) => void,
+): IpcUnsubscribe {
+  return subscribe((target) => {
+    const nextState = controller.openDeepLink(target);
+    onUpdate?.(nextState, target);
+  });
 }

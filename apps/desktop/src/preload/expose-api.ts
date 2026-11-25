@@ -5,7 +5,9 @@ import {
   PHASE1_IPC_CHANNELS,
   Phase1IpcChannelContracts,
   PHASE2_IPC_CHANNELS,
+  PHASE2_IPC_EVENT_CHANNELS,
   Phase2IpcChannelContracts,
+  Phase2IpcEventContracts,
   type AppVersion,
   type CachedArtifactRecord,
   type ClearOfflineDraftInput,
@@ -13,6 +15,7 @@ import {
   type GetPdfViewerStateInput,
   type GetWorkspaceLayoutInput,
   type HealthResponse,
+  type IpcUnsubscribe,
   type KeychainSession,
   type ListOfflineDraftsInput,
   type OfflineDraftRecord,
@@ -20,6 +23,7 @@ import {
   type OpenExternalInput,
   type OpenExternalOutput,
   type PdfCopyCitationPayload,
+  type PdfDeepLinkOpenedListener,
   type PdfDeepLinkTarget,
   type PdfViewerState,
   type Phase1SunrisePreloadApi,
@@ -37,6 +41,11 @@ import {
 import type { z } from 'zod';
 
 export type PreloadInvoke = (channel: string, payload?: unknown) => Promise<unknown>;
+
+export type PreloadEventSubscribe = (
+  channel: string,
+  listener: (payload: unknown) => void,
+) => IpcUnsubscribe;
 
 export interface ContextBridgeLike<TApi = SunrisePreloadApi> {
   readonly exposeInMainWorld: (apiKey: string, api: TApi) => void;
@@ -254,7 +263,27 @@ function buildCachePreloadNamespace(invoke: PreloadInvoke): Phase1SunrisePreload
   });
 }
 
-function buildPhase2PreloadNamespaces(invoke: PreloadInvoke): {
+function subscribePdfDeepLinkOpened(
+  subscribe: PreloadEventSubscribe | undefined,
+  listener: PdfDeepLinkOpenedListener,
+): IpcUnsubscribe {
+  if (!subscribe) {
+    return () => undefined;
+  }
+  const channel = PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED;
+  const payloadSchema = Phase2IpcEventContracts[channel].payload;
+  return subscribe(channel, (rawPayload: unknown) => {
+    const parsed = payloadSchema.safeParse(rawPayload);
+    if (parsed.success) {
+      listener(parsed.data);
+    }
+  });
+}
+
+function buildPhase2PreloadNamespaces(
+  invoke: PreloadInvoke,
+  subscribe?: PreloadEventSubscribe,
+): {
   readonly references: Phase2SunrisePreloadApi['references'];
   readonly pdf: Phase2SunrisePreloadApi['pdf'];
 } {
@@ -294,6 +323,8 @@ function buildPhase2PreloadNamespaces(invoke: PreloadInvoke): {
         Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_OPEN_DEEP_LINK].output,
         target,
       ),
+    onDeepLinkOpened: (listener: PdfDeepLinkOpenedListener): IpcUnsubscribe =>
+      subscribePdfDeepLinkOpened(subscribe, listener),
   });
 
   return { references, pdf };
@@ -313,9 +344,12 @@ export function createPhase1PreloadApi(invoke: PreloadInvoke): Phase1SunrisePrel
   });
 }
 
-export function createPhase2PreloadApi(invoke: PreloadInvoke): Phase2SunrisePreloadApi {
+export function createPhase2PreloadApi(
+  invoke: PreloadInvoke,
+  subscribe?: PreloadEventSubscribe,
+): Phase2SunrisePreloadApi {
   const phase1 = createPhase1PreloadApi(invoke);
-  const { references, pdf } = buildPhase2PreloadNamespaces(invoke);
+  const { references, pdf } = buildPhase2PreloadNamespaces(invoke, subscribe);
   return Object.freeze({
     app: phase1.app,
     window: phase1.window,
@@ -350,8 +384,9 @@ export function exposePhase1SunriseApi(
 export function exposePhase2SunriseApi(
   bridge: ContextBridgeLike<Phase2SunrisePreloadApi>,
   invoke: PreloadInvoke,
+  subscribe?: PreloadEventSubscribe,
 ): Phase2SunrisePreloadApi {
-  const api = createPhase2PreloadApi(invoke);
+  const api = createPhase2PreloadApi(invoke, subscribe);
   bridge.exposeInMainWorld('sunrise', api);
   return api;
 }
