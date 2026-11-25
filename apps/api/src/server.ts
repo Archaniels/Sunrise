@@ -28,6 +28,76 @@ export interface ApiPhase2Services {
   readonly pdfAnnotationService?: PdfAnnotationService;
 }
 
+function buildPhase2OwnershipGuards(
+  fileExplorerService: FileExplorerService,
+  referenceService?: ReferenceService,
+): {
+  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly assertReferenceInProject?: (projectId: string, referenceId: string) => Promise<boolean>;
+} {
+  const hasFileInProject = fileExplorerService.hasFileInProject;
+  return {
+    ...(hasFileInProject
+      ? {
+          assertFileInProject: (projectId: string, fileId: string) =>
+            hasFileInProject(projectId, fileId),
+        }
+      : {}),
+    ...(referenceService
+      ? {
+          assertReferenceInProject: async (projectId: string, referenceId: string) => {
+            const result = await referenceService.getReference(
+              { userId: '00000000-0000-4000-8000-000000000000', role: 'viewer' },
+              projectId,
+              referenceId,
+            );
+            return result.ok;
+          },
+        }
+      : {}),
+  };
+}
+
+function registerPhase2ServerRoutes(
+  app: FastifyInstance,
+  phase1Services: ApiPhase1Services,
+  phase2Services: ApiPhase2Services,
+): void {
+  const guards = buildPhase2OwnershipGuards(
+    phase1Services.fileExplorerService,
+    phase2Services.referenceService,
+  );
+  if (phase2Services.literatureService) {
+    registerLiteratureRoutes(app, phase1Services.authService, phase2Services.literatureService);
+  }
+  if (phase2Services.referenceService) {
+    registerReferenceRoutes(
+      app,
+      phase1Services.authService,
+      phase1Services.projectService,
+      phase2Services.referenceService,
+      guards,
+    );
+  }
+  if (phase2Services.ingestionService) {
+    registerIngestionRoutes(
+      app,
+      phase1Services.authService,
+      phase1Services.projectService,
+      phase2Services.ingestionService,
+    );
+  }
+  if (phase2Services.pdfAnnotationService) {
+    registerPdfAnnotationRoutes(
+      app,
+      phase1Services.authService,
+      phase1Services.projectService,
+      phase2Services.pdfAnnotationService,
+      guards,
+    );
+  }
+}
+
 export function createApiServer(
   probes: HealthProbes,
   version: string,
@@ -45,32 +115,8 @@ export function createApiServer(
       phase1Services.projectService,
       phase1Services.fileExplorerService,
     );
-    if (phase2Services?.literatureService) {
-      registerLiteratureRoutes(app, phase1Services.authService, phase2Services.literatureService);
-    }
-    if (phase2Services?.referenceService) {
-      registerReferenceRoutes(
-        app,
-        phase1Services.authService,
-        phase1Services.projectService,
-        phase2Services.referenceService,
-      );
-    }
-    if (phase2Services?.ingestionService) {
-      registerIngestionRoutes(
-        app,
-        phase1Services.authService,
-        phase1Services.projectService,
-        phase2Services.ingestionService,
-      );
-    }
-    if (phase2Services?.pdfAnnotationService) {
-      registerPdfAnnotationRoutes(
-        app,
-        phase1Services.authService,
-        phase1Services.projectService,
-        phase2Services.pdfAnnotationService,
-      );
+    if (phase2Services) {
+      registerPhase2ServerRoutes(app, phase1Services, phase2Services);
     }
   }
   return app;

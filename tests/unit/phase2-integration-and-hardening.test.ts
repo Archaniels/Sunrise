@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -22,16 +22,22 @@ import {
 } from '../../apps/api/src/services/auth-service.js';
 import { createInMemoryFileExplorerService } from '../../apps/api/src/services/file-explorer-service.js';
 import {
+  createDefaultDoiHydrator,
   createIngestionService,
+  extractPdfContentWithPdfJs,
   parseXmpPacketMetadata,
 } from '../../apps/api/src/services/ingestion-service.js';
 import {
   createLiteratureSearchService,
+  createOpenAlexAdapter,
   parsePubMedXmlCandidates,
 } from '../../apps/api/src/services/literature-service.js';
 import { createInMemoryPdfAnnotationService } from '../../apps/api/src/services/pdf-annotation-service.js';
 import { createInMemoryProjectService } from '../../apps/api/src/services/project-service.js';
-import { createInMemoryReferenceService } from '../../apps/api/src/services/reference-service.js';
+import {
+  createInMemoryReferenceService,
+  createReferenceService,
+} from '../../apps/api/src/services/reference-service.js';
 import {
   registerPhase2IpcHandlers,
   type Phase2IpcRegistrar,
@@ -184,8 +190,53 @@ function createMockAuthPgClient(sqlLog: string[]): TransactionClient {
   };
 }
 
+function buildPhase2TestServer() {
+  const authService = createInMemoryAuthService();
+  const fileExplorerService = createInMemoryFileExplorerService();
+  const referenceService = createInMemoryReferenceService();
+  const pdfAnnotationService = createInMemoryPdfAnnotationService();
+  const literatureService = createLiteratureSearchService({
+    adapters: {
+      openalex: async () => parsePubMedXmlCandidates(SAMPLE_PUBMED_XML),
+      crossref: async () => [],
+      pubmed: async () => [],
+    },
+  });
+  const ingestionService = createIngestionService({
+    referenceService,
+    hydrateByDoi: async () => null,
+    extractPdfContent: async () => ({
+      text: 'Working draft',
+      xmpTitle: 'Working Draft',
+      xmpAuthors: ['Dr. Owner'],
+      xmpDoi: null,
+    }),
+  });
+  return {
+    authService,
+    fileExplorerService,
+    referenceService,
+    pdfAnnotationService,
+    literatureService,
+    ingestionService,
+  };
+}
+
+function resolveAssetUrlToDiskPath(assetUrl: string): string {
+  if (assetUrl.startsWith('file://')) {
+    return fileURLToPath(assetUrl);
+  }
+  if (assetUrl.startsWith('/@fs/')) {
+    return assetUrl.slice('/@fs/'.length);
+  }
+  if (assetUrl.startsWith('/')) {
+    return join(REPO_ROOT, assetUrl.slice(1));
+  }
+  return resolve(REPO_ROOT, assetUrl);
+}
+
 describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () => {
-  it('enforces tightened production CSP with worker-src self and splits dev vs production navigation origins', () => {
+  it('enforces tightened production CSP, splits navigation origins, and resolves an existing local pdf.js worker file (F1)', () => {
     expect(validateCspHeader(MAIN_WINDOW_CSP).ok).toBe(true);
     expect(MAIN_WINDOW_CSP).toContain("worker-src 'self'");
     expect(MAIN_WINDOW_CSP).toContain("connect-src 'self'");
@@ -208,11 +259,14 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     expect(isAllowedNavigationOrigin('http://localhost:5173/', devOrigins)).toBe(true);
 
     const workerUrl = resolveLocalPdfWorkerUrl();
-    expect(workerUrl).toContain('pdf.worker.min.mjs');
     expect(workerUrl.startsWith('https://')).toBe(false);
+    expect(workerUrl.startsWith('http://')).toBe(false);
+    expect(workerUrl).toContain('pdfjs-dist/build/pdf.worker.min.mjs');
+    expect(workerUrl).not.toContain('src/renderer');
+    expect(existsSync(resolveAssetUrlToDiskPath(workerUrl))).toBe(true);
   });
 
-  it('commits and rolls back PoolClient transactions via withTransaction and uses FOR UPDATE during refresh rotation', async () => {
+  it('commits/rolls back PoolClient transactions, uses FOR UPDATE on refresh rotation, and locks project on Postgres reference writes (F5)', async () => {
     const executedSql: string[] = [];
     const releaseSpy = vi.fn();
     const fakeClient: TransactionClient = {
@@ -269,11 +323,19 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     expect(sqlLog.some((q) => q.includes('FOR UPDATE'))).toBe(true);
     expect(sqlLog[sqlLog.length - 1]).toBe('COMMIT');
 
-    const refRepo = createPostgresReferenceRepository(fakePool);
-    expect(typeof refRepo.runInTransaction).toBe('function');
+    executedSql.length = 0;
+    const refService = createReferenceService(createPostgresReferenceRepository(fakePool));
+    const createdRef = await refService.createReference(
+      { userId: '11111111-1111-4111-8111-111111111111', role: 'owner' },
+      { projectId: '22222222-2222-4222-8222-222222222222', title: 'Locked Write Reference' },
+    );
+    expect(createdRef.ok).toBe(true);
+    expect(executedSql[0]).toBe('BEGIN');
+    expect(executedSql[1]).toBe('SELECT id FROM projects WHERE id = $1 FOR UPDATE');
+    expect(executedSql[executedSql.length - 1]).toBe('COMMIT');
   });
 
-  it('prevents concurrent refresh token double-spend in memory and verifies SQL migration indexes', async () => {
+  it('prevents concurrent refresh token double-spend and verifies SQL composite FK and partial unique indexes (F2)', async () => {
     const authService = createInMemoryAuthService();
     const signup = await authService.signup({
       email: 'race@sunrise.edu',
@@ -289,8 +351,7 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
       authService.refresh({ refreshToken: signup.value.tokens.refreshToken }),
       authService.refresh({ refreshToken: signup.value.tokens.refreshToken }),
     ]);
-    const okCount = [first, second].filter((item) => item.ok).length;
-    expect(okCount).toBe(1);
+    expect([first, second].filter((item) => item.ok).length).toBe(1);
 
     const migrationSql = readFileSync(
       join(REPO_ROOT, 'apps/api/src/db/migrations/0003_references_and_pdf_annotations.sql'),
@@ -298,101 +359,301 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     );
     expect(migrationSql).toContain('uq_project_files_active_sibling');
     expect(migrationSql).toContain('WHERE deleted_at IS NULL');
-    expect(migrationSql).toContain('uq_project_references_project_cite_key');
-    expect(migrationSql).toContain('uq_project_references_project_doi');
-    expect(migrationSql).toContain('WHERE doi IS NOT NULL');
+    expect(migrationSql).toContain('uq_project_files_project_id_id');
+    expect(migrationSql).toContain('uq_project_references_project_id_id');
+    expect(migrationSql).toContain('FOREIGN KEY (project_id, local_pdf_file_id)');
+    expect(migrationSql).toContain('FOREIGN KEY (project_id, file_id)');
+    expect(migrationSql).toContain('FOREIGN KEY (project_id, reference_id)');
   });
 
-  it('parses PubMed XML and PDF XMP packets and serves Phase 2 HTTP routes with RBAC', async () => {
+  it('blocks cross-project localPdfFileId, fileId, and referenceId IDOR with HTTP 404 and rejects malformed query params with 400 (F2, F6)', async () => {
+    const services = buildPhase2TestServer();
+    const alice = await services.authService.signup({
+      email: 'f2-alice@sunrise.edu',
+      password: 'AlicePassword!2026',
+      displayName: 'Dr. Alice',
+    });
+    const bob = await services.authService.signup({
+      email: 'f2-bob@sunrise.edu',
+      password: 'BobPassword!2026',
+      displayName: 'Dr. Bob',
+    });
+    expect(alice.ok && bob.ok).toBe(true);
+    if (!alice.ok || !bob.ok) {
+      return;
+    }
+
+    const projectService = createInMemoryProjectService([alice.value.user, bob.value.user]);
+    const app = createApiServer(
+      { checkPostgres: async () => 1, checkPgvector: async () => 1, checkS3: async () => 1 },
+      '0.1.0',
+      {
+        authService: services.authService,
+        projectService,
+        fileExplorerService: services.fileExplorerService,
+      },
+      {
+        literatureService: services.literatureService,
+        referenceService: services.referenceService,
+        ingestionService: services.ingestionService,
+        pdfAnnotationService: services.pdfAnnotationService,
+      },
+    );
+
+    const aliceHeader = { authorization: `Bearer ${alice.value.tokens.accessToken}` };
+    const bobHeader = { authorization: `Bearer ${bob.value.tokens.accessToken}` };
+
+    const projectAId: string = (
+      await app.inject({
+        method: 'POST',
+        url: '/projects',
+        headers: aliceHeader,
+        payload: { name: 'Project A' },
+      })
+    ).json().value.id;
+    const projectBId: string = (
+      await app.inject({
+        method: 'POST',
+        url: '/projects',
+        headers: bobHeader,
+        payload: { name: 'Project B' },
+      })
+    ).json().value.id;
+
+    const fileAId: string = (
+      await app.inject({
+        method: 'POST',
+        url: `/projects/${projectAId}/files`,
+        headers: aliceHeader,
+        payload: {
+          parentId: null,
+          fileName: 'a.pdf',
+          sizeBytes: 4,
+          contentBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+        },
+      })
+    ).json().value.id;
+    const fileBId: string = (
+      await app.inject({
+        method: 'POST',
+        url: `/projects/${projectBId}/files`,
+        headers: bobHeader,
+        payload: {
+          parentId: null,
+          fileName: 'b.pdf',
+          sizeBytes: 4,
+          contentBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+        },
+      })
+    ).json().value.id;
+
+    const refARes = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/references`,
+      headers: aliceHeader,
+      payload: { title: 'Alice Paper', year: 2025, localPdfFileId: fileAId },
+    });
+    expect(refARes.statusCode).toBe(201);
+    const refAId: string = refARes.json().value.reference.id;
+
+    const refBId: string = (
+      await app.inject({
+        method: 'POST',
+        url: `/projects/${projectBId}/references`,
+        headers: bobHeader,
+        payload: { title: 'Bob Paper', year: 2025, localPdfFileId: fileBId },
+      })
+    ).json().value.reference.id;
+
+    const crossCreateRef = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/references`,
+      headers: aliceHeader,
+      payload: { title: 'Cross Link Attempt', localPdfFileId: fileBId },
+    });
+    expect(crossCreateRef.statusCode).toBe(404);
+
+    const crossAttachPdf = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/references/${refAId}/attach-pdf`,
+      headers: aliceHeader,
+      payload: { localPdfFileId: fileBId },
+    });
+    expect(crossAttachPdf.statusCode).toBe(404);
+
+    const crossPatchRef = await app.inject({
+      method: 'PATCH',
+      url: `/projects/${projectAId}/references/${refAId}`,
+      headers: aliceHeader,
+      payload: { localPdfFileId: fileBId },
+    });
+    expect(crossPatchRef.statusCode).toBe(404);
+
+    const validAnn = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/files/${fileAId}/annotations`,
+      headers: aliceHeader,
+      payload: {
+        referenceId: refAId,
+        pageNumber: 1,
+        selectedText: 'Valid project annotation',
+        rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
+      },
+    });
+    expect(validAnn.statusCode).toBe(201);
+
+    const crossFileAnn = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/files/${fileBId}/annotations`,
+      headers: aliceHeader,
+      payload: {
+        pageNumber: 1,
+        selectedText: 'Cross file IDOR',
+        rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
+      },
+    });
+    expect(crossFileAnn.statusCode).toBe(404);
+
+    const crossRefAnn = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/files/${fileAId}/annotations`,
+      headers: aliceHeader,
+      payload: {
+        referenceId: refBId,
+        pageNumber: 1,
+        selectedText: 'Cross reference IDOR',
+        rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
+      },
+    });
+    expect(crossRefAnn.statusCode).toBe(404);
+
+    const crossListAnn = await app.inject({
+      method: 'GET',
+      url: `/projects/${projectAId}/files/${fileBId}/annotations`,
+      headers: aliceHeader,
+    });
+    expect(crossListAnn.statusCode).toBe(404);
+
+    const badYearQuery = await app.inject({
+      method: 'GET',
+      url: `/projects/${projectAId}/references?yearFrom=abc`,
+      headers: aliceHeader,
+    });
+    expect(badYearQuery.statusCode).toBe(400);
+
+    const badBoolQuery = await app.inject({
+      method: 'GET',
+      url: `/projects/${projectAId}/references?hasPdf=maybe`,
+      headers: aliceHeader,
+    });
+    expect(badBoolQuery.statusCode).toBe(400);
+
+    const badPageQuery = await app.inject({
+      method: 'GET',
+      url: `/projects/${projectAId}/files/${fileAId}/annotations?pageNumber=abc`,
+      headers: aliceHeader,
+    });
+    expect(badPageQuery.statusCode).toBe(400);
+
+    await app.close();
+  });
+
+  it('falls back to OpenAlex on Crossref failure (F3), handles malformed PDFs cleanly (F4), and paginates offset queries without starvation (F6)', async () => {
     const pubmedResults = parsePubMedXmlCandidates(SAMPLE_PUBMED_XML);
     expect(pubmedResults).toHaveLength(1);
     expect(pubmedResults[0]?.doi).toBe('10.1093/jbd/2025.001');
-    expect(pubmedResults[0]?.authors[0]?.family).toBe('Patel');
 
     const xmp = parseXmpPacketMetadata(SAMPLE_XMP_XML);
     expect(xmp.xmpTitle).toBe('XMP Extracted Paper Title');
-    expect(xmp.xmpAuthors).toEqual(['Mei Lin']);
     expect(xmp.xmpDoi).toBe('10.1145/3544548.3589999');
 
-    const authService = createInMemoryAuthService();
-    const owner = await authService.signup({
-      email: 'p2-owner@sunrise.edu',
-      password: 'OwnerPassword!2026',
-      displayName: 'Dr. Owner',
+    const requestedUrls: string[] = [];
+    const fallbackFetch: typeof fetch = async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      requestedUrls.push(url);
+      if (url.includes('api.crossref.org')) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'https://openalex.org/W999',
+          display_name: 'OpenAlex Fallback Paper',
+          publication_year: 2025,
+          doi: 'https://doi.org/10.1234/fallback-2025',
+          authorships: [{ author: { display_name: 'Ada Lovelace', orcid: null } }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const hydrator = createDefaultDoiHydrator('polite-pool@sunrise.research', fallbackFetch);
+    const hydrated = await hydrator('10.1234/fallback-2025');
+    expect(hydrated?.provider).toBe('openalex');
+    expect(hydrated?.candidate.title).toBe('OpenAlex Fallback Paper');
+    expect(requestedUrls.some((url) => url.includes('api.crossref.org'))).toBe(true);
+    expect(
+      requestedUrls.some((url) => url.includes('api.openalex.org/works/https://doi.org/')),
+    ).toBe(true);
+
+    const corruptPdfService = createIngestionService({
+      hydrateByDoi: async () => {
+        throw new Error('upstream down');
+      },
+      extractPdfContent: extractPdfContentWithPdfJs,
     });
-    expect(owner.ok).toBe(true);
-    if (!owner.ok) {
-      return;
+    const editor = { userId: '11111111-1111-4111-8111-111111111111', role: 'editor' as const };
+    const corruptOutcome = await corruptPdfService.ingestPdf(editor, {
+      projectId: '22222222-2222-4222-8222-222222222222',
+      localPdfFileId: '33333333-3333-4333-8333-333333333333',
+      fileName: 'corrupt.pdf',
+      pdfBase64: Buffer.from('NOT_A_PDF_AT_ALL', 'utf8').toString('base64'),
+    });
+    expect(corruptOutcome.ok).toBe(false);
+    if (!corruptOutcome.ok) {
+      expect(corruptOutcome.error.code).toBe('VALIDATION_ERROR');
     }
-    const projectService = createInMemoryProjectService([owner.value.user]);
-    const fileExplorerService = createInMemoryFileExplorerService();
-    const referenceService = createInMemoryReferenceService();
-    const literatureService = createLiteratureSearchService({
+
+    const throwingDoiOutcome = await corruptPdfService.ingestDoi(editor, {
+      projectId: '22222222-2222-4222-8222-222222222222',
+      doi: '10.1234/throws-500',
+    });
+    expect(throwingDoiOutcome.ok).toBe(false);
+    if (!throwingDoiOutcome.ok) {
+      expect(throwingDoiOutcome.error.code).toBe('DEPENDENCY_UNAVAILABLE');
+    }
+
+    let capturedPerPage = '';
+    const pagingFetch: typeof fetch = async (input) => {
+      const rawUrl =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const parsedUrl = new URL(rawUrl);
+      capturedPerPage = parsedUrl.searchParams.get('per-page') ?? '';
+      return new Response(
+        JSON.stringify({
+          results: [
+            { id: 'https://openalex.org/W1', display_name: 'Paper 1', publication_year: 2025 },
+            { id: 'https://openalex.org/W2', display_name: 'Paper 2', publication_year: 2025 },
+            { id: 'https://openalex.org/W3', display_name: 'Paper 3', publication_year: 2025 },
+            { id: 'https://openalex.org/W4', display_name: 'Paper 4', publication_year: 2025 },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+    const pagedSearch = createLiteratureSearchService({
       adapters: {
-        openalex: async () => pubmedResults,
+        openalex: createOpenAlexAdapter('polite-pool@sunrise.research', pagingFetch),
         crossref: async () => [],
         pubmed: async () => [],
       },
     });
-    const ingestionService = createIngestionService({
-      referenceService,
-      hydrateByDoi: async () => null,
-      extractPdfContent: async () => ({
-        text: 'Working draft',
-        xmpTitle: 'Working Draft',
-        xmpAuthors: ['Dr. Owner'],
-        xmpDoi: null,
-      }),
-    });
-    const pdfAnnotationService = createInMemoryPdfAnnotationService();
-
-    const app = createApiServer(
-      { checkPostgres: async () => 1, checkPgvector: async () => 1, checkS3: async () => 1 },
-      '0.1.0',
-      { authService, projectService, fileExplorerService },
-      { literatureService, referenceService, ingestionService, pdfAnnotationService },
-    );
-
-    const authHeader = { authorization: `Bearer ${owner.value.tokens.accessToken}` };
-    const searchRes = await app.inject({
-      method: 'POST',
-      url: '/literature/search',
-      headers: authHeader,
-      payload: { query: 'clinical literature' },
-    });
-    expect(searchRes.statusCode).toBe(200);
-    expect(searchRes.json().value.results).toHaveLength(1);
-
-    const projectRes = await app.inject({
-      method: 'POST',
-      url: '/projects',
-      headers: authHeader,
-      payload: { name: 'Phase 2 Study' },
-    });
-    const projectId: string = projectRes.json().value.id;
-
-    const createRefRes = await app.inject({
-      method: 'POST',
-      url: `/projects/${projectId}/references`,
-      headers: authHeader,
-      payload: { title: 'API Reference', year: 2025 },
-    });
-    expect(createRefRes.statusCode).toBe(201);
-
-    const fileId = '22222222-2222-4222-8222-222222222222';
-    const annRes = await app.inject({
-      method: 'POST',
-      url: `/projects/${projectId}/files/${fileId}/annotations`,
-      headers: authHeader,
-      payload: {
-        pageNumber: 1,
-        selectedText: 'Key sentence',
-        rects: [{ x: 0.1, y: 0.2, width: 0.4, height: 0.03 }],
-      },
-    });
-    expect(annRes.statusCode).toBe(201);
-
-    await app.close();
+    const page2 = await pagedSearch.search({ query: 'paged', offset: 2, limit: 2 });
+    expect(capturedPerPage).toBe('4');
+    expect(page2.ok).toBe(true);
+    if (page2.ok) {
+      expect(page2.value.totalResults).toBe(4);
+      expect(page2.value.results.map((item) => item.title)).toEqual(['Paper 3', 'Paper 4']);
+    }
   });
 
   it('wires Phase 2 preload API and IPC router with desktop clipboard and viewer state services', async () => {

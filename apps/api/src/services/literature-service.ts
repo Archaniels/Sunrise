@@ -60,10 +60,20 @@ const DEFAULT_SLEEP = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+const MAX_SEARCH_CACHE_ENTRIES = 500;
+
 const XML_PARSER = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   trimValues: true,
+  processEntities: {
+    enabled: true,
+    maxEntitySize: 1024,
+    maxExpansionDepth: 5,
+    maxTotalExpansions: 500,
+    maxExpandedLength: 50000,
+    maxEntityCount: 50,
+  },
 });
 
 function buildPolitePoolHeaders(
@@ -249,6 +259,31 @@ function aggregateProviderOutcomes(outcomes: readonly ProviderRunOutcome[]): {
   return { allCandidates, warnings, providerSummaries };
 }
 
+function storeBoundedCacheEntry(
+  cache: Map<string, CachedSearchEntry>,
+  cacheKey: string,
+  response: FederatedSearchResponse,
+  ttlMs: number,
+  currentTime: number,
+): void {
+  for (const [key, entry] of cache.entries()) {
+    if (entry.expiresAt <= currentTime) {
+      cache.delete(key);
+    }
+  }
+  while (cache.size >= MAX_SEARCH_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+  cache.set(cacheKey, {
+    expiresAt: currentTime + ttlMs,
+    response,
+  });
+}
+
 export function createLiteratureSearchService(
   deps: LiteratureSearchServiceDeps,
 ): LiteratureSearchService {
@@ -313,10 +348,7 @@ export function createLiteratureSearchService(
       });
 
       if (providerSummaries.some((summary) => summary.status === 'ok')) {
-        cache.set(cacheKey, {
-          expiresAt: now() + policy.cacheTtlMs,
-          response,
-        });
+        storeBoundedCacheEntry(cache, cacheKey, response, policy.cacheTtlMs, now());
       }
 
       return ok(response);
@@ -549,7 +581,7 @@ function parseOpenAlexBiblio(biblio: Readonly<Record<string, unknown>> | null): 
   };
 }
 
-function parseOpenAlexWork(work: unknown): ProviderPaperCandidate | null {
+export function parseOpenAlexWork(work: unknown): ProviderPaperCandidate | null {
   const rec = asRecord(work);
   if (!rec) {
     return null;
@@ -660,15 +692,21 @@ export function parseCrossrefWork(item: unknown): ProviderPaperCandidate | null 
   };
 }
 
+function resolveProviderFetchLimit(query: LiteratureSearchQuery): number {
+  const offset = query.offset ?? 0;
+  const limit = query.limit ?? 25;
+  return Math.min(100, Math.max(1, offset + limit));
+}
+
 export function createOpenAlexAdapter(
   contactEmail: string = DEFAULT_PROVIDER_CLIENT_POLICY.contactEmail,
   fetchFn: typeof fetch = fetch,
 ): ProviderAdapterFn {
   return async (query, context): Promise<readonly ProviderPaperCandidate[]> => {
-    const limit = query.limit ?? 25;
+    const fetchLimit = resolveProviderFetchLimit(query);
     const url = new URL('https://api.openalex.org/works');
     url.searchParams.set('search', query.query);
-    url.searchParams.set('per-page', String(limit));
+    url.searchParams.set('per-page', String(fetchLimit));
     url.searchParams.set('mailto', contactEmail);
     const response = await fetchFn(url.toString(), {
       headers: context.headers,
@@ -690,10 +728,10 @@ export function createCrossrefAdapter(
   fetchFn: typeof fetch = fetch,
 ): ProviderAdapterFn {
   return async (query, context): Promise<readonly ProviderPaperCandidate[]> => {
-    const limit = query.limit ?? 25;
+    const fetchLimit = resolveProviderFetchLimit(query);
     const url = new URL('https://api.crossref.org/works');
     url.searchParams.set('query', query.query);
-    url.searchParams.set('rows', String(limit));
+    url.searchParams.set('rows', String(fetchLimit));
     url.searchParams.set('mailto', contactEmail);
     const response = await fetchFn(url.toString(), {
       headers: context.headers,
@@ -716,11 +754,11 @@ export function createPubMedAdapter(
   fetchFn: typeof fetch = fetch,
 ): ProviderAdapterFn {
   return async (query, context): Promise<readonly ProviderPaperCandidate[]> => {
-    const limit = query.limit ?? 25;
+    const fetchLimit = resolveProviderFetchLimit(query);
     const searchUrl = new URL('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi');
     searchUrl.searchParams.set('db', 'pubmed');
     searchUrl.searchParams.set('retmode', 'json');
-    searchUrl.searchParams.set('retmax', String(limit));
+    searchUrl.searchParams.set('retmax', String(fetchLimit));
     searchUrl.searchParams.set('term', query.query);
     if (options.contactEmail) {
       searchUrl.searchParams.set('email', options.contactEmail);

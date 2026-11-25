@@ -28,6 +28,12 @@ export interface PdfAnnotationRepository {
   readonly deleteById: (projectId: string, annotationId: string) => Promise<boolean>;
 }
 
+export interface PdfAnnotationServiceOptions {
+  readonly now?: () => Date;
+  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly assertReferenceInProject?: (projectId: string, referenceId: string) => Promise<boolean>;
+}
+
 export interface PdfAnnotationService {
   readonly createAnnotation: (
     actor: PdfActor,
@@ -82,10 +88,43 @@ function areValidIds(projectId: string, annotationId: string): boolean {
   return UuidSchema.safeParse(projectId).success && UuidSchema.safeParse(annotationId).success;
 }
 
+function resolveAnnotationServiceOptions(
+  nowOrOptions?: (() => Date) | PdfAnnotationServiceOptions,
+): PdfAnnotationServiceOptions {
+  if (typeof nowOrOptions === 'function') {
+    return { now: nowOrOptions };
+  }
+  return nowOrOptions ?? {};
+}
+
+async function verifyAnnotationOwnership(
+  options: PdfAnnotationServiceOptions,
+  projectId: string,
+  fileId: string,
+  referenceId: string | null | undefined,
+): Promise<Result<true>> {
+  if (options.assertFileInProject) {
+    const fileAllowed = await options.assertFileInProject(projectId, fileId);
+    if (!fileAllowed) {
+      return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
+    }
+  }
+  if (referenceId && options.assertReferenceInProject) {
+    const refAllowed = await options.assertReferenceInProject(projectId, referenceId);
+    if (!refAllowed) {
+      return err({ code: 'NOT_FOUND', message: 'Reference not found in this project' });
+    }
+  }
+  return ok(true);
+}
+
 export function createPdfAnnotationService(
   repo: PdfAnnotationRepository,
-  now: () => Date = () => new Date(),
+  nowOrOptions?: (() => Date) | PdfAnnotationServiceOptions,
 ): PdfAnnotationService {
+  const options = resolveAnnotationServiceOptions(nowOrOptions);
+  const now = options.now ?? (() => new Date());
+
   return {
     createAnnotation: async (actor, input): Promise<Result<PdfAnnotation>> => {
       if (!canRoleMutatePdfAnnotations(actor.role)) {
@@ -100,6 +139,15 @@ export function createPdfAnnotationService(
           code: 'VALIDATION_ERROR',
           message: parsed.error.issues[0]?.message ?? 'Invalid PDF annotation payload',
         });
+      }
+      const ownership = await verifyAnnotationOwnership(
+        options,
+        parsed.data.projectId,
+        parsed.data.fileId,
+        parsed.data.referenceId,
+      );
+      if (!ownership.ok) {
+        return ownership;
       }
       const nowIso = now().toISOString();
       const created = PdfAnnotationSchema.parse({
@@ -127,6 +175,15 @@ export function createPdfAnnotationService(
           code: 'VALIDATION_ERROR',
           message: parsed.error.issues[0]?.message ?? 'Invalid PDF annotation query',
         });
+      }
+      const ownership = await verifyAnnotationOwnership(
+        options,
+        parsed.data.projectId,
+        parsed.data.fileId,
+        parsed.data.referenceId,
+      );
+      if (!ownership.ok) {
+        return ownership;
       }
       const items = await repo.listByFile(parsed.data.projectId, parsed.data.fileId);
       const filtered = items.filter((item) => {
@@ -199,6 +256,8 @@ export function createPdfAnnotationService(
   };
 }
 
-export function createInMemoryPdfAnnotationService(now?: () => Date): PdfAnnotationService {
-  return createPdfAnnotationService(createInMemoryPdfAnnotationRepository(), now);
+export function createInMemoryPdfAnnotationService(
+  nowOrOptions?: (() => Date) | PdfAnnotationServiceOptions,
+): PdfAnnotationService {
+  return createPdfAnnotationService(createInMemoryPdfAnnotationRepository(), nowOrOptions);
 }

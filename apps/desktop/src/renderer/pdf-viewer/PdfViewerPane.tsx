@@ -15,8 +15,8 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { getDocument } from 'pdfjs-dist';
-import { useEffect, useRef, type ReactElement } from 'react';
+import { getDocument, type RenderTask } from 'pdfjs-dist';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { configureLocalPdfWorker } from './pdf-worker-setup.js';
 
 export interface PdfViewerPaneProps {
@@ -50,6 +50,14 @@ function readControlValue(target: unknown): string {
   return '';
 }
 
+function isRenderCancelledError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null && 'name' in error) {
+    const name = Reflect.get(error, 'name');
+    return name === 'RenderingCancelledException' || name === 'AbortException';
+  }
+  return false;
+}
+
 export function PdfViewerPane({
   state,
   annotations,
@@ -62,6 +70,7 @@ export function PdfViewerPane({
   onSelectionAction,
 }: PdfViewerPaneProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
     configureLocalPdfWorker();
@@ -69,29 +78,42 @@ export function PdfViewerPane({
 
   useEffect(() => {
     if (!pdfData || !canvasRef.current) {
+      setRenderError(null);
       return;
     }
     let cancelled = false;
+    let activeRenderTask: RenderTask | null = null;
+    const loadingTask = getDocument({ data: pdfData });
+
     const renderCurrentPage = async (): Promise<void> => {
-      const task = getDocument({ data: pdfData });
       try {
-        const doc = await task.promise;
+        setRenderError(null);
+        const doc = await loadingTask.promise;
         if (cancelled || !canvasRef.current) {
           return;
         }
         const page = await doc.getPage(state.currentPage);
+        if (cancelled || !canvasRef.current) {
+          return;
+        }
         const viewport = page.getViewport({ scale: state.zoom });
         const canvas = canvasRef.current;
         Reflect.set(canvas, 'width', Math.floor(viewport.width));
         Reflect.set(canvas, 'height', Math.floor(viewport.height));
-        await page.render({ canvas, viewport }).promise;
-      } finally {
-        await task.destroy();
+        activeRenderTask = page.render({ canvas, viewport });
+        await activeRenderTask.promise;
+      } catch (error: unknown) {
+        if (!cancelled && !isRenderCancelledError(error)) {
+          setRenderError('Unable to render this PDF page. The file may be corrupted or encrypted.');
+        }
       }
     };
+
     void renderCurrentPage();
     return () => {
       cancelled = true;
+      activeRenderTask?.cancel();
+      void loadingTask.destroy().catch(() => undefined);
     };
   }, [pdfData, state.currentPage, state.zoom]);
 
@@ -162,6 +184,15 @@ export function PdfViewerPane({
           </button>
         </div>
       </div>
+
+      {renderError !== null && (
+        <div
+          role="alert"
+          className="border-b border-rose-800 bg-rose-950/80 px-3 py-2 text-xs text-rose-200"
+        >
+          {renderError}
+        </div>
+      )}
 
       {activeSelection !== null && (
         <div

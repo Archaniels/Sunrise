@@ -37,7 +37,7 @@ import {
 } from '@sunrise/shared';
 import { XMLParser } from 'fast-xml-parser';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { parseCrossrefWork } from './literature-service.js';
+import { parseCrossrefWork, parseOpenAlexWork } from './literature-service.js';
 import { createInMemoryReferenceService, type ReferenceService } from './reference-service.js';
 
 export interface IngestionActor {
@@ -106,6 +106,14 @@ const XMP_PARSER = new XMLParser({
   attributeNamePrefix: '@_',
   removeNSPrefix: true,
   trimValues: true,
+  processEntities: {
+    enabled: true,
+    maxEntitySize: 1024,
+    maxExpansionDepth: 5,
+    maxTotalExpansions: 500,
+    maxExpandedLength: 50000,
+    maxEntityCount: 50,
+  },
 });
 
 function parseAuthorNameString(rawName: string): ReferenceAuthor | null {
@@ -246,10 +254,15 @@ function mapReferenceToCsl(ref: Reference): CSL {
   };
 }
 
+function isCslObject(value: unknown): value is CSL {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function parseBibliographyEntries(content: string): Result<CSL[]> {
   try {
     const cite = new Cite(content);
-    const data = Array.isArray(cite.data) ? (cite.data as CSL[]) : [];
+    const rawData: unknown = cite.data;
+    const data = Array.isArray(rawData) ? rawData.filter(isCslObject) : [];
     return ok(data);
   } catch (error: unknown) {
     const message =
@@ -257,6 +270,18 @@ function parseBibliographyEntries(content: string): Result<CSL[]> {
         ? error.message.trim().slice(0, 480)
         : 'Unable to parse bibliography content';
     return err({ code: 'VALIDATION_ERROR', message });
+  }
+}
+
+function formatBibliographyEntries(cslEntries: CSL[], format: 'bibtex' | 'ris'): Result<string> {
+  try {
+    const cite = new Cite(cslEntries);
+    return ok(String(cite.format(format)));
+  } catch {
+    return err({
+      code: 'VALIDATION_ERROR',
+      message: `Unable to serialize bibliography entries as ${format}`,
+    });
   }
 }
 
@@ -399,12 +424,40 @@ function mergeByokFallback(
   };
 }
 
+async function safeHydrateByDoi(
+  hydrateByDoi: IngestionServiceDeps['hydrateByDoi'],
+  doi: string,
+): Promise<Result<HydratedDoiMatch | null>> {
+  try {
+    return ok(await hydrateByDoi(doi));
+  } catch {
+    return err({
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: `Failed to hydrate metadata for DOI ${doi}`,
+    });
+  }
+}
+
+async function safeExtractPdfContent(
+  extractPdfContent: IngestionServiceDeps['extractPdfContent'],
+  pdfBytes: Uint8Array,
+): Promise<Result<ExtractedPdfContent>> {
+  try {
+    return ok(await extractPdfContent(pdfBytes));
+  } catch {
+    return err({
+      code: 'VALIDATION_ERROR',
+      message: 'Unable to extract metadata from invalid, corrupted, or encrypted PDF',
+    });
+  }
+}
+
 async function resolveHeuristicDraft(
   deps: IngestionServiceDeps,
   parsed: ReturnType<typeof IngestPdfInputSchema.parse>,
   extracted: ExtractedPdfContent,
   detectedDoi: string | null,
-): Promise<ResolvedHeuristicPdfDraft> {
+): Promise<Result<ResolvedHeuristicPdfDraft>> {
   const heuristic = buildHeuristicPdfMetadata(extracted, parsed.fileName);
   const base: ResolvedHeuristicPdfDraft = {
     ...heuristic,
@@ -414,14 +467,21 @@ async function resolveHeuristicDraft(
     needsLlmFallback: true,
   };
   if (!parsed.allowByokFallback || deps.byokFallback === undefined) {
-    return base;
+    return ok(base);
   }
-  const llmResult = await deps.byokFallback.extractMetadata({
-    projectId: parsed.projectId,
-    text: extracted.text,
-    fileName: parsed.fileName,
-  });
-  return llmResult !== null ? mergeByokFallback(base, llmResult) : base;
+  try {
+    const llmResult = await deps.byokFallback.extractMetadata({
+      projectId: parsed.projectId,
+      text: extracted.text,
+      fileName: parsed.fileName,
+    });
+    return ok(llmResult !== null ? mergeByokFallback(base, llmResult) : base);
+  } catch {
+    return err({
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: 'BYOK metadata extraction adapter failed',
+    });
+  }
 }
 
 function toIngestPdfResponse(
@@ -454,7 +514,11 @@ async function ingestPdfWithHeuristics(
   extracted: ExtractedPdfContent,
   detectedDoi: string | null,
 ): Promise<Result<IngestPdfResponse>> {
-  const draft = await resolveHeuristicDraft(deps, parsed, extracted, detectedDoi);
+  const draftResult = await resolveHeuristicDraft(deps, parsed, extracted, detectedDoi);
+  if (!draftResult.ok) {
+    return draftResult;
+  }
+  const draft = draftResult.value;
   const created = await referenceService.createReference(actor, {
     projectId: parsed.projectId,
     title: draft.title,
@@ -505,7 +569,11 @@ async function tryIngestPdfFromDoi(
   if (detectedDoi === null) {
     return null;
   }
-  const hydrated = await deps.hydrateByDoi(detectedDoi);
+  const hydratedResult = await safeHydrateByDoi(deps.hydrateByDoi, detectedDoi);
+  if (!hydratedResult.ok) {
+    return hydratedResult;
+  }
+  const hydrated = hydratedResult.value;
   if (hydrated === null) {
     return null;
   }
@@ -582,6 +650,25 @@ async function processSingleBibliographyEntry(
   }
 }
 
+function toIngestDoiResponse(
+  outcome:
+    | { readonly status: 'conflict'; readonly conflict: DuplicateReferenceConflict }
+    | {
+        readonly status: 'created' | 'merged' | 'updated' | 'skipped';
+        readonly reference: Reference;
+      },
+  canonicalDoi: string,
+  hydratedFrom: 'crossref' | 'openalex',
+): IngestDoiResponse {
+  return IngestDoiResponseSchema.parse({
+    status: outcome.status,
+    canonicalDoi,
+    hydratedFrom,
+    reference: outcome.status === 'conflict' ? null : outcome.reference,
+    conflict: outcome.status === 'conflict' ? outcome.conflict : null,
+  });
+}
+
 export function createIngestionService(deps: IngestionServiceDeps): IngestionService {
   const referenceService = deps.referenceService ?? createInMemoryReferenceService();
 
@@ -601,7 +688,11 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
       if (canonicalDoi === null) {
         return err({ code: 'VALIDATION_ERROR', message: 'Malformed DOI identifier' });
       }
-      const hydrated = await deps.hydrateByDoi(canonicalDoi);
+      const hydratedResult = await safeHydrateByDoi(deps.hydrateByDoi, canonicalDoi);
+      if (!hydratedResult.ok) {
+        return hydratedResult;
+      }
+      const hydrated = hydratedResult.value;
       if (hydrated === null) {
         return err({
           code: 'NOT_FOUND',
@@ -623,15 +714,7 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
       if (!outcome.ok) {
         return outcome;
       }
-      return ok(
-        IngestDoiResponseSchema.parse({
-          status: outcome.value.status,
-          canonicalDoi,
-          hydratedFrom: hydrated.provider,
-          reference: outcome.value.status === 'conflict' ? null : outcome.value.reference,
-          conflict: outcome.value.status === 'conflict' ? outcome.value.conflict : null,
-        }),
-      );
+      return ok(toIngestDoiResponse(outcome.value, canonicalDoi, hydrated.provider));
     },
 
     importBibliography: async (actor, input): Promise<Result<ImportBibliographyResponse>> => {
@@ -709,12 +792,14 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
       }
 
       const cslEntries = selected.map(mapReferenceToCsl);
-      const cite = new Cite(cslEntries);
-      const content = String(cite.format(parsed.data.format));
+      const formatted = formatBibliographyEntries(cslEntries, parsed.data.format);
+      if (!formatted.ok) {
+        return formatted;
+      }
       return ok(
         ExportBibliographyResponseSchema.parse({
           format: parsed.data.format,
-          content,
+          content: formatted.value,
           entryCount: selected.length,
           suggestedFileName,
         }),
@@ -736,7 +821,14 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
       if (!bytesResult.ok) {
         return bytesResult;
       }
-      const extracted = await deps.extractPdfContent(bytesResult.value);
+      const extractedResult = await safeExtractPdfContent(
+        deps.extractPdfContent,
+        bytesResult.value,
+      );
+      if (!extractedResult.ok) {
+        return extractedResult;
+      }
+      const extracted = extractedResult.value;
       const detectedDoi = extractCandidateDoisFromPdf(extracted)[0] ?? null;
       const hydratedOutcome = await tryIngestPdfFromDoi(
         actor,
@@ -876,7 +968,57 @@ export async function extractPdfContentWithPdfJs(
       xmpDoi: xmp.xmpDoi,
     };
   } finally {
-    await loadingTask.destroy();
+    await loadingTask.destroy().catch(() => undefined);
+  }
+}
+
+async function fetchCrossrefDoiCandidate(
+  doi: string,
+  contactEmail: string,
+  headers: Readonly<Record<string, string>>,
+  fetchFn: typeof fetch,
+): Promise<HydratedDoiMatch | null> {
+  const crossrefUrl = `https://api.crossref.org/works/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(contactEmail)}`;
+  try {
+    const response = await fetchFn(crossrefUrl, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const body: unknown = await response.json();
+    const message =
+      typeof body === 'object' && body !== null && 'message' in body
+        ? Reflect.get(body, 'message')
+        : null;
+    const candidate = parseCrossrefWork(message);
+    return candidate !== null ? { provider: 'crossref', candidate } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOpenAlexDoiCandidate(
+  doi: string,
+  contactEmail: string,
+  headers: Readonly<Record<string, string>>,
+  fetchFn: typeof fetch,
+): Promise<HydratedDoiMatch | null> {
+  const openAlexUrl = `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(contactEmail)}`;
+  try {
+    const response = await fetchFn(openAlexUrl, {
+      headers,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const body: unknown = await response.json();
+    const candidate = parseOpenAlexWork(body);
+    return candidate !== null ? { provider: 'openalex', candidate } : null;
+  } catch {
+    return null;
   }
 }
 
@@ -890,26 +1032,10 @@ export function createDefaultDoiHydrator(
   };
 
   return async (doi: string): Promise<HydratedDoiMatch | null> => {
-    const crossrefUrl = `https://api.crossref.org/works/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(contactEmail)}`;
-    try {
-      const crossrefRes = await fetchFn(crossrefUrl, {
-        headers,
-        signal: AbortSignal.timeout(8000),
-      });
-      if (crossrefRes.ok) {
-        const body: unknown = await crossrefRes.json();
-        const message =
-          typeof body === 'object' && body !== null && 'message' in body
-            ? Reflect.get(body, 'message')
-            : null;
-        const candidate = parseCrossrefWork(message);
-        if (candidate !== null) {
-          return { provider: 'crossref', candidate };
-        }
-      }
-    } catch {
-      return null;
+    const crossrefMatch = await fetchCrossrefDoiCandidate(doi, contactEmail, headers, fetchFn);
+    if (crossrefMatch !== null) {
+      return crossrefMatch;
     }
-    return null;
+    return fetchOpenAlexDoiCandidate(doi, contactEmail, headers, fetchFn);
   };
 }

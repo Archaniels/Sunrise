@@ -92,6 +92,7 @@ export interface FileExplorerService {
       readonly limit?: number;
     },
   ) => Promise<Result<ProjectFileNode[]>>;
+  readonly hasFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
 }
 
 const TEXT_PREVIEW_KINDS: ReadonlySet<FileKind> = new Set([
@@ -906,6 +907,11 @@ export function createFileExplorerService(
       );
       matches.sort((a, b) => a.virtualPath.localeCompare(b.virtualPath));
       return ok(matches.slice(0, validated.value.limit));
+    },
+
+    hasFileInProject: async (projectId, fileId): Promise<boolean> => {
+      const node = nodes.get(fileId);
+      return Boolean(node && node.projectId === projectId && node.deletedAt === null);
     },
   };
 }

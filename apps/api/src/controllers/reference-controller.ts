@@ -12,6 +12,10 @@ import type { ProjectService } from '../services/project-service.js';
 import type { ReferenceActor, ReferenceService } from '../services/reference-service.js';
 import { sendErrorReply } from './auth-controller.js';
 
+export interface ReferenceRouteGuardOptions {
+  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+}
+
 function readUuidParam(params: unknown, key: string): string | null {
   if (typeof params === 'object' && params !== null && key in params) {
     const value = Reflect.get(params, key);
@@ -22,26 +26,34 @@ function readUuidParam(params: unknown, key: string): string | null {
   return null;
 }
 
-function readOptionalQueryNumber(query: unknown, key: string): number | undefined {
+function readRawQueryValue(query: unknown, key: string): unknown {
   if (typeof query !== 'object' || query === null || !(key in query)) {
     return undefined;
   }
-  const raw = Reflect.get(query, key);
+  return Reflect.get(query, key);
+}
+
+function parseQueryNumberValue(query: unknown, key: string): unknown {
+  const raw = readRawQueryValue(query, key);
+  if (raw === undefined || raw === '') {
+    return undefined;
+  }
   if (typeof raw === 'number') {
     return raw;
   }
-  if (typeof raw === 'string' && raw.trim().length > 0) {
-    const parsed = Number(raw);
-    return Number.isNaN(parsed) ? undefined : parsed;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    const parsed = Number(trimmed);
+    return trimmed.length > 0 && Number.isFinite(parsed) ? parsed : raw;
   }
-  return undefined;
+  return raw;
 }
 
-function readOptionalQueryBoolean(query: unknown, key: string): boolean | undefined {
-  if (typeof query !== 'object' || query === null || !(key in query)) {
+function parseQueryBooleanValue(query: unknown, key: string): unknown {
+  const raw = readRawQueryValue(query, key);
+  if (raw === undefined || raw === '') {
     return undefined;
   }
-  const raw = Reflect.get(query, key);
   if (typeof raw === 'boolean') {
     return raw;
   }
@@ -51,15 +63,15 @@ function readOptionalQueryBoolean(query: unknown, key: string): boolean | undefi
   if (raw === 'false') {
     return false;
   }
-  return undefined;
+  return raw;
 }
 
-function readOptionalQueryString(query: unknown, key: string): string | undefined {
-  if (typeof query !== 'object' || query === null || !(key in query)) {
+function parseQueryStringValue(query: unknown, key: string): unknown {
+  const raw = readRawQueryValue(query, key);
+  if (raw === undefined || raw === '') {
     return undefined;
   }
-  const raw = Reflect.get(query, key);
-  return typeof raw === 'string' && raw.trim().length > 0 ? raw : undefined;
+  return raw;
 }
 
 async function resolveReferenceActor(
@@ -84,13 +96,13 @@ async function resolveReferenceActor(
 }
 
 function buildListQueryObject(projectId: string, rawQuery: unknown): Record<string, unknown> {
-  const tag = readOptionalQueryString(rawQuery, 'tag');
-  const search = readOptionalQueryString(rawQuery, 'search');
-  const sortBy = readOptionalQueryString(rawQuery, 'sortBy');
-  const sortOrder = readOptionalQueryString(rawQuery, 'sortOrder');
-  const yearFrom = readOptionalQueryNumber(rawQuery, 'yearFrom');
-  const yearTo = readOptionalQueryNumber(rawQuery, 'yearTo');
-  const hasPdf = readOptionalQueryBoolean(rawQuery, 'hasPdf');
+  const tag = parseQueryStringValue(rawQuery, 'tag');
+  const search = parseQueryStringValue(rawQuery, 'search');
+  const sortBy = parseQueryStringValue(rawQuery, 'sortBy');
+  const sortOrder = parseQueryStringValue(rawQuery, 'sortOrder');
+  const yearFrom = parseQueryNumberValue(rawQuery, 'yearFrom');
+  const yearTo = parseQueryNumberValue(rawQuery, 'yearTo');
+  const hasPdf = parseQueryBooleanValue(rawQuery, 'hasPdf');
   return {
     projectId,
     ...(tag !== undefined ? { tag } : {}),
@@ -103,6 +115,14 @@ function buildListQueryObject(projectId: string, rawQuery: unknown): Record<stri
   };
 }
 
+function readProjectAndReferenceIds(
+  params: unknown,
+): { readonly projectId: string; readonly referenceId: string } | null {
+  const projectId = readUuidParam(params, 'projectId');
+  const referenceId = readUuidParam(params, 'referenceId');
+  return projectId && referenceId ? { projectId, referenceId } : null;
+}
+
 function resolveCreateStatusCode(status: string): number {
   if (status === 'conflict') {
     return 409;
@@ -110,11 +130,29 @@ function resolveCreateStatusCode(status: string): number {
   return status === 'created' ? 201 : 200;
 }
 
+async function ensureOptionalFileOwned(
+  reply: FastifyReply,
+  guards: ReferenceRouteGuardOptions | undefined,
+  projectId: string,
+  fileId: string | null | undefined,
+): Promise<boolean> {
+  if (!fileId || !guards?.assertFileInProject) {
+    return true;
+  }
+  const allowed = await guards.assertFileInProject(projectId, fileId);
+  if (!allowed) {
+    sendErrorReply(reply, 'NOT_FOUND', 'PDF file not found in this project');
+    return false;
+  }
+  return true;
+}
+
 export function registerReferenceRoutes(
   app: FastifyInstance,
   authService: AuthService,
   projectService: ProjectService,
   referenceService: ReferenceService,
+  guards?: ReferenceRouteGuardOptions,
 ): void {
   app.post('/projects/:projectId/references', async (request, reply) => {
     const projectId = readUuidParam(request.params, 'projectId');
@@ -140,6 +178,9 @@ export function registerReferenceRoutes(
         'VALIDATION_ERROR',
         parsed.error.issues[0]?.message ?? 'Invalid reference payload',
       );
+    }
+    if (!(await ensureOptionalFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
+      return reply;
     }
     const result = await referenceService.createReference(actor, parsed.data);
     if (!result.ok) {
@@ -238,6 +279,9 @@ export function registerReferenceRoutes(
         parsed.error.issues[0]?.message ?? 'Invalid reference update payload',
       );
     }
+    if (!(await ensureOptionalFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
+      return reply;
+    }
     const result = await referenceService.updateReference(
       actor,
       projectId,
@@ -251,15 +295,15 @@ export function registerReferenceRoutes(
   });
 
   app.post('/projects/:projectId/references/:referenceId/attach-pdf', async (request, reply) => {
-    const projectId = readUuidParam(request.params, 'projectId');
-    const referenceId = readUuidParam(request.params, 'referenceId');
-    if (!projectId || !referenceId) {
+    const ids = readProjectAndReferenceIds(request.params);
+    if (!ids) {
       return sendErrorReply(
         reply,
         'VALIDATION_ERROR',
         'Invalid projectId or referenceId parameter',
       );
     }
+    const { projectId, referenceId } = ids;
     const actor = await resolveReferenceActor(
       request,
       reply,
@@ -283,6 +327,9 @@ export function registerReferenceRoutes(
         'VALIDATION_ERROR',
         parsed.error.issues[0]?.message ?? 'Invalid attach PDF payload',
       );
+    }
+    if (!(await ensureOptionalFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
+      return reply;
     }
     const result = await referenceService.attachPdf(actor, parsed.data);
     if (!result.ok) {

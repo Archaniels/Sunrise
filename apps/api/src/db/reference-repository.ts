@@ -171,6 +171,9 @@ function buildReferenceRepositoryMethods(
       );
       return (result.rowCount ?? 0) > 0;
     },
+    lockProject: async (projectId) => {
+      await executor.query('SELECT id FROM projects WHERE id = $1 FOR UPDATE', [projectId]);
+    },
     runInTransaction,
   };
 }

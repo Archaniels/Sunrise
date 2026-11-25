@@ -38,7 +38,13 @@ export interface ReferenceRepository {
   readonly listByProject: (projectId: string) => Promise<Reference[]>;
   readonly save: (reference: Reference) => Promise<Reference>;
   readonly deleteById: (projectId: string, referenceId: string) => Promise<boolean>;
+  readonly lockProject?: (projectId: string) => Promise<void>;
   readonly runInTransaction?: <T>(fn: (txRepo: ReferenceRepository) => Promise<T>) => Promise<T>;
+}
+
+export interface ReferenceServiceOptions {
+  readonly now?: () => Date;
+  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
 }
 
 export interface ReferenceService {
@@ -483,10 +489,37 @@ async function checkUpdateConflicts(
   return ok(true);
 }
 
+function resolveReferenceServiceOptions(
+  nowOrOptions?: (() => Date) | ReferenceServiceOptions,
+): ReferenceServiceOptions {
+  if (typeof nowOrOptions === 'function') {
+    return { now: nowOrOptions };
+  }
+  return nowOrOptions ?? {};
+}
+
+async function verifyOptionalProjectFile(
+  assertFileInProject: ReferenceServiceOptions['assertFileInProject'],
+  projectId: string,
+  fileId: string | null | undefined,
+): Promise<Result<true>> {
+  if (!fileId || !assertFileInProject) {
+    return ok(true);
+  }
+  const owned = await assertFileInProject(projectId, fileId);
+  if (!owned) {
+    return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
+  }
+  return ok(true);
+}
+
 export function createReferenceService(
   repo: ReferenceRepository,
-  now: () => Date = () => new Date(),
+  nowOrOptions?: (() => Date) | ReferenceServiceOptions,
 ): ReferenceService {
+  const options = resolveReferenceServiceOptions(nowOrOptions);
+  const now = options.now ?? (() => new Date());
+
   return {
     createReference: async (actor, input): Promise<Result<CreateReferenceOutcome>> => {
       if (!canRoleMutateReferences(actor.role)) {
@@ -503,10 +536,19 @@ export function createReferenceService(
       if (!doiResult.ok) {
         return doiResult;
       }
+      const fileOwnership = await verifyOptionalProjectFile(
+        options.assertFileInProject,
+        parsed.data.projectId,
+        parsed.data.localPdfFileId,
+      );
+      if (!fileOwnership.ok) {
+        return fileOwnership;
+      }
       const normalizedDoi = doiResult.value;
       const nowIso = now().toISOString();
 
       return executeInReferenceTransaction(repo, async (txRepo) => {
+        await txRepo.lockProject?.(parsed.data.projectId);
         if (normalizedDoi !== null) {
           const duplicate = await txRepo.findByProjectAndDoi(parsed.data.projectId, normalizedDoi);
           if (duplicate !== null) {
@@ -604,8 +646,17 @@ export function createReferenceService(
       if (!nextDoiResult.ok) {
         return nextDoiResult;
       }
+      const fileOwnership = await verifyOptionalProjectFile(
+        options.assertFileInProject,
+        projectId,
+        parsed.data.localPdfFileId,
+      );
+      if (!fileOwnership.ok) {
+        return fileOwnership;
+      }
 
       return executeInReferenceTransaction(repo, async (txRepo) => {
+        await txRepo.lockProject?.(projectId);
         const existing = await txRepo.findById(referenceId);
         if (!existing || existing.projectId !== projectId) {
           return err({ code: 'NOT_FOUND', message: 'Reference not found' });
@@ -642,7 +693,16 @@ export function createReferenceService(
           message: parsed.error.issues[0]?.message ?? 'Invalid PDF attachment payload',
         });
       }
+      const fileOwnership = await verifyOptionalProjectFile(
+        options.assertFileInProject,
+        parsed.data.projectId,
+        parsed.data.localPdfFileId,
+      );
+      if (!fileOwnership.ok) {
+        return fileOwnership;
+      }
       return executeInReferenceTransaction(repo, async (txRepo) => {
+        await txRepo.lockProject?.(parsed.data.projectId);
         const existing = await txRepo.findById(parsed.data.referenceId);
         if (!existing || existing.projectId !== parsed.data.projectId) {
           return err({ code: 'NOT_FOUND', message: 'Reference not found' });
@@ -677,6 +737,8 @@ export function createReferenceService(
   };
 }
 
-export function createInMemoryReferenceService(now?: () => Date): ReferenceService {
-  return createReferenceService(createInMemoryReferenceRepository(), now);
+export function createInMemoryReferenceService(
+  nowOrOptions?: (() => Date) | ReferenceServiceOptions,
+): ReferenceService {
+  return createReferenceService(createInMemoryReferenceRepository(), nowOrOptions);
 }
