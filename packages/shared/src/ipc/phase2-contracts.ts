@@ -86,6 +86,6 @@ export interface Phase2SunrisePreloadApi extends Phase1SunrisePreloadApi {
     ) => Promise<Result<PdfViewerState | null>>;
     readonly saveViewerState: (state: PdfViewerState) => Promise<Result<PdfViewerState>>;
     readonly openDeepLink: (target: PdfDeepLinkTarget) => Promise<Result<PdfDeepLinkTarget>>;
-    readonly onDeepLinkOpened?: (listener: PdfDeepLinkOpenedListener) => IpcUnsubscribe;
+    readonly onDeepLinkOpened: (listener: PdfDeepLinkOpenedListener) => IpcUnsubscribe;
   };
 }
