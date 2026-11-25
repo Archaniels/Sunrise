@@ -98,6 +98,7 @@ describe('Phase 0.2 Cloud API health server, redaction, migrations, and probe ad
       '0000_enable_pgvector.sql',
       '0001_auth_and_projects.sql',
       '0002_project_files.sql',
+      '0003_references_and_pdf_annotations.sql',
     ]);
     expect(firstRun.skipped).toEqual([]);
 

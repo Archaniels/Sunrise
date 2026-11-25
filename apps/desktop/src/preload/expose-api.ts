@@ -4,10 +4,13 @@ import {
   IpcChannelContracts,
   PHASE1_IPC_CHANNELS,
   Phase1IpcChannelContracts,
+  PHASE2_IPC_CHANNELS,
+  Phase2IpcChannelContracts,
   type AppVersion,
   type CachedArtifactRecord,
   type ClearOfflineDraftInput,
   type GetCachedArtifactInput,
+  type GetPdfViewerStateInput,
   type GetWorkspaceLayoutInput,
   type HealthResponse,
   type KeychainSession,
@@ -16,7 +19,11 @@ import {
   type OkBooleanOutput,
   type OpenExternalInput,
   type OpenExternalOutput,
+  type PdfCopyCitationPayload,
+  type PdfDeepLinkTarget,
+  type PdfViewerState,
   type Phase1SunrisePreloadApi,
+  type Phase2SunrisePreloadApi,
   type PickLocalFilesInput,
   type PickLocalFilesOutput,
   type Result,
@@ -247,6 +254,51 @@ function buildCachePreloadNamespace(invoke: PreloadInvoke): Phase1SunrisePreload
   });
 }
 
+function buildPhase2PreloadNamespaces(invoke: PreloadInvoke): {
+  readonly references: Phase2SunrisePreloadApi['references'];
+  readonly pdf: Phase2SunrisePreloadApi['pdf'];
+} {
+  const references = Object.freeze({
+    copyCitation: async (payload: PdfCopyCitationPayload): Promise<Result<OkBooleanOutput>> =>
+      invokeValidatedChannel(
+        invoke,
+        PHASE2_IPC_CHANNELS.REFERENCES_COPY_CITATION,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.REFERENCES_COPY_CITATION].input,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.REFERENCES_COPY_CITATION].output,
+        payload,
+      ),
+  });
+
+  const pdf = Object.freeze({
+    getViewerState: async (input: GetPdfViewerStateInput): Promise<Result<PdfViewerState | null>> =>
+      invokeValidatedChannel(
+        invoke,
+        PHASE2_IPC_CHANNELS.PDF_GET_VIEWER_STATE,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_GET_VIEWER_STATE].input,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_GET_VIEWER_STATE].output,
+        input,
+      ),
+    saveViewerState: async (state: PdfViewerState): Promise<Result<PdfViewerState>> =>
+      invokeValidatedChannel(
+        invoke,
+        PHASE2_IPC_CHANNELS.PDF_SAVE_VIEWER_STATE,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_SAVE_VIEWER_STATE].input,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_SAVE_VIEWER_STATE].output,
+        state,
+      ),
+    openDeepLink: async (target: PdfDeepLinkTarget): Promise<Result<PdfDeepLinkTarget>> =>
+      invokeValidatedChannel(
+        invoke,
+        PHASE2_IPC_CHANNELS.PDF_OPEN_DEEP_LINK,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_OPEN_DEEP_LINK].input,
+        Phase2IpcChannelContracts[PHASE2_IPC_CHANNELS.PDF_OPEN_DEEP_LINK].output,
+        target,
+      ),
+  });
+
+  return { references, pdf };
+}
+
 export function createPhase1PreloadApi(invoke: PreloadInvoke): Phase1SunrisePreloadApi {
   const base = createPreloadApi(invoke);
   const { workspace, files } = buildWorkspaceAndFilesNamespaces(invoke);
@@ -258,6 +310,22 @@ export function createPhase1PreloadApi(invoke: PreloadInvoke): Phase1SunrisePrel
     workspace,
     files,
     cache: buildCachePreloadNamespace(invoke),
+  });
+}
+
+export function createPhase2PreloadApi(invoke: PreloadInvoke): Phase2SunrisePreloadApi {
+  const phase1 = createPhase1PreloadApi(invoke);
+  const { references, pdf } = buildPhase2PreloadNamespaces(invoke);
+  return Object.freeze({
+    app: phase1.app,
+    window: phase1.window,
+    shell: phase1.shell,
+    auth: phase1.auth,
+    workspace: phase1.workspace,
+    files: phase1.files,
+    cache: phase1.cache,
+    references,
+    pdf,
   });
 }
 
@@ -275,6 +343,15 @@ export function exposePhase1SunriseApi(
   invoke: PreloadInvoke,
 ): Phase1SunrisePreloadApi {
   const api = createPhase1PreloadApi(invoke);
+  bridge.exposeInMainWorld('sunrise', api);
+  return api;
+}
+
+export function exposePhase2SunriseApi(
+  bridge: ContextBridgeLike<Phase2SunrisePreloadApi>,
+  invoke: PreloadInvoke,
+): Phase2SunrisePreloadApi {
+  const api = createPhase2PreloadApi(invoke);
   bridge.exposeInMainWorld('sunrise', api);
   return api;
 }
