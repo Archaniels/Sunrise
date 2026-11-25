@@ -4,13 +4,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PROVIDER_CLIENT_POLICY,
+  err,
   FederatedSearchResponseSchema,
+  ok,
   type FederatedSearchResponse,
   type LiteratureProvider,
   type LiteratureSearchQuery,
   type ProviderClientPolicy,
   type ProviderPaperCandidate,
   type Result,
+  type UserPublic,
 } from '@sunrise/shared';
 
 const REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -90,6 +93,70 @@ function assertFederatedDedupOutcome(
   expect(crossrefUserAgent).toContain(DEFAULT_PROVIDER_CLIENT_POLICY.contactEmail);
 }
 
+function createDeferredProviderAdapters(
+  gate: Promise<void>,
+  startedProviders: LiteratureProvider[],
+  capturedHeaders: Record<string, Readonly<Record<string, string>>>,
+): Readonly<Record<LiteratureProvider, ProviderAdapterFn>> {
+  return {
+    openalex: vi.fn<ProviderAdapterFn>(async (_query, ctx) => {
+      startedProviders.push('openalex');
+      capturedHeaders['openalex'] = ctx.headers;
+      await gate;
+      return [
+        makeCandidate('openalex', {
+          externalId: 'W-101',
+          doi: 'https://doi.org/10.1038/S41586-024-12345-6',
+          citationCount: 92,
+          pdfUrl: 'https://arxiv.org/pdf/2404.00001.pdf',
+          isOpenAccess: true,
+          topics: ['Information Retrieval', 'Bibliometrics'],
+        }),
+      ];
+    }),
+    crossref: vi.fn<ProviderAdapterFn>(async (_query, ctx) => {
+      startedProviders.push('crossref');
+      capturedHeaders['crossref'] = ctx.headers;
+      await gate;
+      return [
+        makeCandidate('crossref', {
+          externalId: 'CR-101',
+          doi: 'doi:10.1038/s41586-024-12345-6',
+          abstract: 'Detailed Crossref abstract with comprehensive evaluation metrics.',
+          citationCount: 40,
+        }),
+      ];
+    }),
+    pubmed: vi.fn<ProviderAdapterFn>(async (_query, ctx) => {
+      startedProviders.push('pubmed');
+      capturedHeaders['pubmed'] = ctx.headers;
+      await gate;
+      return [
+        makeCandidate('pubmed', {
+          externalId: 'PMID-202',
+          title: 'Clinical Trial Synthesis Using Retrieval Pipelines',
+          authors: [{ family: 'Patel', given: 'Asha', displayName: 'Asha Patel', orcid: null }],
+          year: 2022,
+          journal: 'BMJ Open',
+          doi: null,
+          citationCount: 14,
+          topics: ['Clinical Research'],
+        }),
+      ];
+    }),
+  };
+}
+
+interface FastifyInjectLike {
+  readonly inject: (options: {
+    readonly method: string;
+    readonly url: string;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly payload?: unknown;
+  }) => Promise<{ readonly statusCode: number; readonly json: () => unknown }>;
+  readonly close: () => Promise<void>;
+}
+
 describe('Phase 2.1 Federated literature search and deduplication acceptance', () => {
   it('queries OpenAlex, Crossref, and PubMed concurrently with polite-pool headers and deduplicates results', async () => {
     const servicePath = join(REPO_ROOT, 'apps/api/src/services/literature-service.ts');
@@ -103,46 +170,13 @@ describe('Phase 2.1 Federated literature search and deduplication acceptance', (
       return;
     }
 
+    let releaseProviders: (() => void) | undefined;
+    const gate = new Promise<void>((resolveGate) => {
+      releaseProviders = resolveGate;
+    });
+    const startedProviders: LiteratureProvider[] = [];
     const capturedHeaders: Record<string, Readonly<Record<string, string>>> = {};
-    const openalexAdapter = vi.fn<ProviderAdapterFn>(async (_query, ctx) => {
-      capturedHeaders['openalex'] = ctx.headers;
-      return [
-        makeCandidate('openalex', {
-          externalId: 'W-101',
-          doi: 'https://doi.org/10.1038/S41586-024-12345-6',
-          citationCount: 92,
-          pdfUrl: 'https://arxiv.org/pdf/2404.00001.pdf',
-          isOpenAccess: true,
-          topics: ['Information Retrieval', 'Bibliometrics'],
-        }),
-      ];
-    });
-    const crossrefAdapter = vi.fn<ProviderAdapterFn>(async (_query, ctx) => {
-      capturedHeaders['crossref'] = ctx.headers;
-      return [
-        makeCandidate('crossref', {
-          externalId: 'CR-101',
-          doi: 'doi:10.1038/s41586-024-12345-6',
-          abstract: 'Detailed Crossref abstract with comprehensive evaluation metrics.',
-          citationCount: 40,
-        }),
-      ];
-    });
-    const pubmedAdapter = vi.fn<ProviderAdapterFn>(async (_query, ctx) => {
-      capturedHeaders['pubmed'] = ctx.headers;
-      return [
-        makeCandidate('pubmed', {
-          externalId: 'PMID-202',
-          title: 'Clinical Trial Synthesis Using Retrieval Pipelines',
-          authors: [{ family: 'Patel', given: 'Asha', displayName: 'Asha Patel', orcid: null }],
-          year: 2022,
-          journal: 'BMJ Open',
-          doi: null,
-          citationCount: 14,
-          topics: ['Clinical Research'],
-        }),
-      ];
-    });
+    const adapters = createDeferredProviderAdapters(gate, startedProviders, capturedHeaders);
 
     const factory = (
       loaded as {
@@ -154,15 +188,18 @@ describe('Phase 2.1 Federated literature search and deduplication acceptance', (
     ).createLiteratureSearchService;
 
     const service = factory({
-      adapters: {
-        openalex: openalexAdapter,
-        crossref: crossrefAdapter,
-        pubmed: pubmedAdapter,
-      },
+      adapters,
       policy: { ...DEFAULT_PROVIDER_CLIENT_POLICY, baseBackoffMs: 50 },
     });
 
-    const response = await service.search({ query: 'federated academic search' });
+    const searchPromise = service.search({ query: 'federated academic search' });
+    await new Promise<void>((resolveTick) => {
+      setImmediate(resolveTick);
+    });
+    expect([...startedProviders].sort()).toEqual(['crossref', 'openalex', 'pubmed']);
+    releaseProviders?.();
+
+    const response = await searchPromise;
     assertFederatedDedupOutcome(response, capturedHeaders);
   });
 
@@ -249,12 +286,108 @@ describe('Phase 2.1 Federated literature search and deduplication acceptance', (
 
   it('registers authenticated literature search HTTP controller routes', async () => {
     const controllerPath = join(REPO_ROOT, 'apps/api/src/controllers/literature-controller.ts');
+    const serverPath = join(REPO_ROOT, 'apps/api/src/server.ts');
     expect(
       existsSync(controllerPath),
       'Missing apps/api/src/controllers/literature-controller.ts',
     ).toBe(true);
+    expect(existsSync(serverPath), 'Missing apps/api/src/server.ts').toBe(true);
 
-    const loaded: unknown = await import(pathToFileURL(controllerPath).href);
-    expect(hasFunctionProp(loaded, 'registerLiteratureRoutes')).toBe(true);
+    const loadedController: unknown = await import(pathToFileURL(controllerPath).href);
+    const loadedServer: unknown = await import(pathToFileURL(serverPath).href);
+    expect(hasFunctionProp(loadedController, 'registerLiteratureRoutes')).toBe(true);
+    expect(hasFunctionProp(loadedServer, 'createApiServer')).toBe(true);
+    if (
+      !hasFunctionProp(loadedController, 'registerLiteratureRoutes') ||
+      !hasFunctionProp(loadedServer, 'createApiServer')
+    ) {
+      return;
+    }
+
+    const createApiServer = (
+      loadedServer as {
+        readonly createApiServer: (
+          probes: {
+            readonly checkPostgres: () => Promise<number>;
+            readonly checkPgvector: () => Promise<number>;
+            readonly checkS3: () => Promise<number>;
+          },
+          version: string,
+        ) => FastifyInjectLike;
+      }
+    ).createApiServer;
+    const registerLiteratureRoutes = (
+      loadedController as {
+        readonly registerLiteratureRoutes: (
+          app: FastifyInjectLike,
+          authService: {
+            readonly getMe: (token: string | undefined) => Promise<Result<UserPublic>>;
+          },
+          literatureService: LiteratureSearchServiceLike,
+        ) => void;
+      }
+    ).registerLiteratureRoutes;
+
+    const searchSpy = vi.fn(
+      async (query: LiteratureSearchQuery): Promise<Result<FederatedSearchResponse>> =>
+        ok({
+          query: query.query,
+          totalResults: 0,
+          cached: false,
+          results: [],
+          warnings: [],
+          providerSummaries: [
+            { provider: 'openalex', status: 'ok', resultCount: 0, cached: false, latencyMs: 5 },
+          ],
+        }),
+    );
+
+    const app = createApiServer(
+      {
+        checkPostgres: async () => 1,
+        checkPgvector: async () => 1,
+        checkS3: async () => 1,
+      },
+      '0.1.0',
+    );
+    registerLiteratureRoutes(
+      app,
+      {
+        getMe: async (token) =>
+          token === 'Bearer valid-token'
+            ? ok({
+                id: '11111111-1111-4111-8111-111111111111',
+                email: 'ada@sunrise.edu',
+                displayName: 'Ada',
+                createdAt: '2026-11-25T00:00:00.000Z',
+              })
+            : err({ code: 'UNAUTHORIZED', message: 'Authentication required' }),
+      },
+      { search: searchSpy },
+    );
+
+    try {
+      const unauthRes = await app.inject({
+        method: 'POST',
+        url: '/literature/search',
+        payload: { query: 'federated search' },
+      });
+      expect(unauthRes.statusCode).toBe(401);
+      expect(searchSpy).not.toHaveBeenCalled();
+
+      const authRes = await app.inject({
+        method: 'POST',
+        url: '/literature/search',
+        headers: { authorization: 'Bearer valid-token' },
+        payload: { query: 'federated search' },
+      });
+      expect(authRes.statusCode).toBe(200);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+      const body = authRes.json() as { readonly ok?: boolean; readonly value?: unknown };
+      expect(body.ok).toBe(true);
+      expect(FederatedSearchResponseSchema.safeParse(body.value).success).toBe(true);
+    } finally {
+      await app.close();
+    }
   });
 });

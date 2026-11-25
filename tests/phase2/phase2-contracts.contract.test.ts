@@ -9,6 +9,7 @@ import {
   buildPdfCreateNotePayload,
   canRoleMutatePdfAnnotations,
   canRoleMutateReferences,
+  CiteKeySchema,
   clampPdfPage,
   clampPdfZoom,
   computeTitleSimilarity,
@@ -24,8 +25,10 @@ import {
   ImportBibliographyInputSchema,
   IngestDoiInputSchema,
   IngestPdfInputSchema,
+  IngestPdfResponseSchema,
   LiteratureSearchFiltersSchema,
   matchesLiteratureFilters,
+  normalizeAuthorFamilyForMatching,
   normalizeDoi,
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
@@ -34,11 +37,15 @@ import {
   PdfSelectionActionPayloadSchema,
   PdfViewerStateSchema,
   PHASE2_IPC_CHANNELS,
+  PHASE2_IPC_EVENT_CHANNELS,
   PHASE2_PRELOAD_EXPOSED_KEYS,
   Phase2IpcChannelContracts,
+  Phase2IpcEventContracts,
   ProviderClientPolicySchema,
   ReferenceManagerViewStateSchema,
   ReferenceSchema,
+  type PdfDeepLinkOpenedListener,
+  type Phase2SunrisePreloadApi,
   type ProviderPaperCandidate,
   type Reference,
   type ReferenceAuthor,
@@ -313,6 +320,65 @@ describe('Phase 2 shared contracts', () => {
       expect(deduped[1]?.year).toBe(2021);
     });
 
+    it('never fuzzy-merges papers with different known DOIs and supports Unicode author/title matching', () => {
+      const partOne = buildProviderCandidate({
+        provider: 'openalex',
+        externalId: 'W-PART-1',
+        title:
+          'Comprehensive Multi-Year Empirical Evaluation of Federated Academic Literature Discovery and Citation Grounding Pipelines Part I',
+        authors: [AUTHOR_SMITH],
+        year: 2024,
+        doi: '10.1038/s41586-024-00101-1',
+      });
+      const partTwo = buildProviderCandidate({
+        provider: 'crossref',
+        externalId: 'CR-PART-2',
+        title:
+          'Comprehensive Multi-Year Empirical Evaluation of Federated Academic Literature Discovery and Citation Grounding Pipelines Part II',
+        authors: [AUTHOR_SMITH],
+        year: 2024,
+        doi: '10.1038/s41586-024-00102-2',
+      });
+
+      expect(computeTitleSimilarity(partOne.title, partTwo.title)).toBeGreaterThanOrEqual(0.85);
+      const distinctDoiResults = deduplicatePaperCandidates([partOne, partTwo]);
+      expect(distinctDoiResults).toHaveLength(2);
+      expect(distinctDoiResults[0]?.doi).toBe('10.1038/s41586-024-00101-1');
+      expect(distinctDoiResults[1]?.doi).toBe('10.1038/s41586-024-00102-2');
+
+      const unicodeAuthor: ReferenceAuthor = {
+        family: '山田',
+        given: '太郎',
+        displayName: '山田 太郎',
+        orcid: null,
+      };
+      expect(normalizeAuthorFamilyForMatching(unicodeAuthor)).toBe('山田');
+      expect(computeTitleSimilarity('研究方法', '研究方法')).toBe(1);
+
+      const unicodeA = buildProviderCandidate({
+        provider: 'openalex',
+        externalId: 'W-JP-1',
+        title: '研究方法',
+        authors: [unicodeAuthor],
+        year: 2024,
+        doi: null,
+        citationCount: 10,
+      });
+      const unicodeB = buildProviderCandidate({
+        provider: 'pubmed',
+        externalId: 'PMID-JP-1',
+        title: '研究方法',
+        authors: [unicodeAuthor],
+        year: 2024,
+        doi: null,
+        citationCount: 22,
+      });
+      const unicodeMerged = deduplicatePaperCandidates([unicodeA, unicodeB]);
+      expect(unicodeMerged).toHaveLength(1);
+      expect(unicodeMerged[0]?.matchedBy).toBe('title_author_year');
+      expect(unicodeMerged[0]?.citationCount).toBe(22);
+    });
+
     it('evaluates literature filters and validates partial-outage FederatedSearchResponseSchema', () => {
       const results = deduplicatePaperCandidates([
         buildProviderCandidate({
@@ -345,6 +411,9 @@ describe('Phase 2 shared contracts', () => {
       const partialOutageResponse = FederatedSearchResponseSchema.safeParse({
         query: 'federated scientific discovery',
         totalResults: 1,
+        totalResultsIsEstimate: true,
+        hasMore: false,
+        upstreamFetchCapReached: false,
         cached: false,
         results,
         warnings: [
@@ -378,6 +447,8 @@ describe('Phase 2 shared contracts', () => {
         '10.1038/s41586-024-00001-1',
       );
       expect(normalizeDoi('doi: 10.1145/3544548.3581000')).toBe('10.1145/3544548.3581000');
+      expect(normalizeDoi('10.1234/example(2024)')).toBe('10.1234/example(2024)');
+      expect(normalizeDoi('10.1234/example(2024)).')).toBe('10.1234/example(2024)');
       expect(normalizeDoi('invalid-doi-string')).toBeNull();
 
       const key1 = generateDeterministicCiteKey([AUTHOR_SMITH], 2024, new Set());
@@ -391,6 +462,19 @@ describe('Phase 2 shared contracts', () => {
       expect(key2).toBe('smith2024b');
       expect(key3).toBe('smith2024c');
       expect(generateDeterministicCiteKey([], null, new Set())).toBe('untitlednd');
+
+      const digitAuthor: ReferenceAuthor = {
+        family: '3M Research',
+        given: '',
+        displayName: '3M Research',
+        orcid: null,
+      };
+      const digitKey1 = generateDeterministicCiteKey([digitAuthor], 2024, new Set());
+      const digitKey2 = generateDeterministicCiteKey([digitAuthor], 2024, new Set([digitKey1]));
+      expect(CiteKeySchema.safeParse(digitKey1).success).toBe(true);
+      expect(CiteKeySchema.safeParse(digitKey2).success).toBe(true);
+      expect(digitKey1).toBe('ref3mresearch2024');
+      expect(digitKey2).toBe('ref3mresearch2024b');
     });
 
     it('validates duplicate DOI conflict payload, Reference Manager state, and RBAC mutation rules', () => {
@@ -430,12 +514,27 @@ describe('Phase 2 shared contracts', () => {
   describe('2.3 Multi-channel ingestion contracts (DOI, BibTeX/RIS, PDF)', () => {
     it('extracts and deduplicates embedded DOIs from PDF text and validates ingestion DTOs', () => {
       const pdfText =
-        'Journal of AI 2024. DOI: 10.1038/s41586-024-00001-1. Also see https://doi.org/10.1145/3544548.3581000) and duplicate 10.1038/S41586-024-00001-1;';
+        'Journal of AI 2024. DOI: 10.1038/s41586-024-00001-1. Also see https://doi.org/10.1145/3544548.3581000), balanced 10.1234/example(2024). and duplicate 10.1038/S41586-024-00001-1;';
       expect(extractDoisFromText(pdfText)).toEqual([
         '10.1038/s41586-024-00001-1',
         '10.1145/3544548.3581000',
+        '10.1234/example(2024)',
       ]);
       expect(extractDoisFromText('No identifiers present in this manuscript')).toEqual([]);
+
+      expect(
+        IngestPdfResponseSchema.safeParse({
+          status: 'created',
+          extractionMethod: 'xmp_and_text_heuristic',
+          detectedDoi: null,
+          hydratedFrom: 'none',
+          byokFallbackUsed: false,
+          needsLlmFallback: true,
+          reference: buildSampleReference(),
+          conflict: null,
+          unverifiedCandidateDois: ['10.1234/example(2024)'],
+        }).success,
+      ).toBe(true);
 
       expect(
         IngestDoiInputSchema.safeParse({
@@ -566,6 +665,36 @@ describe('Phase 2 shared contracts', () => {
           copyPayload,
         ).success,
       ).toBe(true);
+
+      expect(PHASE2_IPC_CHANNELS.PDF_DEEP_LINK_OPENED).toBe('pdf:deepLinkOpened');
+      expect(PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED).toBe('pdf:deepLinkOpened');
+      expect(
+        Phase2IpcEventContracts[PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED].payload.safeParse({
+          projectId: PROJECT_ID,
+          fileId: FILE_ID,
+          referenceId: REF_ID,
+          pageNumber: 7,
+          highlightId: null,
+          searchExcerpt: null,
+        }).success,
+      ).toBe(true);
+      expect(
+        Phase2IpcEventContracts[PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED].payload.safeParse({
+          projectId: PROJECT_ID,
+          fileId: FILE_ID,
+          referenceId: REF_ID,
+          pageNumber: 0,
+          highlightId: null,
+          searchExcerpt: null,
+        }).success,
+      ).toBe(false);
+
+      const subscribeTypeCheck: NonNullable<Phase2SunrisePreloadApi['pdf']['onDeepLinkOpened']> = (
+        _listener: PdfDeepLinkOpenedListener,
+      ) => {
+        return (): void => undefined;
+      };
+      expect(typeof subscribeTypeCheck).toBe('function');
     });
   });
 });

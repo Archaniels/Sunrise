@@ -265,6 +265,8 @@ describe('Phase 2.4 Integrated Academic PDF Viewer and persistent annotations ac
       for (const forbidden of FORBIDDEN_PRELOAD_KEYS) {
         expect(forbidden in exposed).toBe(false);
       }
+      const pdfNamespace = exposed['pdf'] as Record<string, unknown> | undefined;
+      expect(typeof pdfNamespace?.['onDeepLinkOpened']).toBe('function');
     }
 
     const routerLoaded: unknown = await import(pathToFileURL(routerPath).href);

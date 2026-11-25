@@ -75,6 +75,9 @@ const SAMPLE_BIBTEX = [
   '}',
 ].join('\n');
 
+const LONG_RIS_DOI =
+  '10.1007/s11192-023-04567-8-reproducible-reference-interchange-format-long-suffix-2023';
+
 const SAMPLE_RIS = [
   'TY  - JOUR',
   'TI  - Reproducible Reference Interchange Formats',
@@ -86,9 +89,70 @@ const SAMPLE_RIS = [
   'IS  - 1',
   'SP  - 10',
   'EP  - 24',
-  'DO  - 10.1007/s11192-023-04567-8',
+  `DO  - ${LONG_RIS_DOI}`,
   'ER  - ',
 ].join('\n');
+
+function assertPreservedEntries(
+  entries: readonly {
+    readonly citeKey: string;
+    readonly authors: ReadonlyArray<{ readonly family: string }>;
+    readonly journal: string | null;
+    readonly doi: string | null;
+    readonly pages: string | null;
+  }[],
+  verifyCiteKey: boolean,
+): void {
+  expect(entries).toHaveLength(2);
+  const chen = entries.find((entry) => entry.doi === '10.1145/3544548.3581234');
+  const gomez = entries.find((entry) => entry.doi === LONG_RIS_DOI);
+
+  expect(chen).toBeDefined();
+  expect(gomez).toBeDefined();
+  if (!chen || !gomez) {
+    return;
+  }
+  expect(chen.authors.map((author) => author.family)).toEqual(['Chen', 'Patel']);
+  expect(chen.journal).toBe('Journal of Digital Libraries');
+  expect(chen.pages).toMatch(/45[-–]{1,2}62/);
+  if (verifyCiteKey) {
+    expect(chen.citeKey).toBe('chen2024');
+  }
+
+  expect(gomez.authors.map((author) => author.family)).toEqual(['Gomez', 'Novak']);
+  expect(gomez.journal).toBe('Scientometrics Review');
+  expect(gomez.doi).toBe(LONG_RIS_DOI);
+  expect(gomez.pages).toMatch(/10[-–]{1,2}24/);
+}
+
+async function assertExportAndReimport(
+  service: IngestionServiceLike,
+  sourceProjectId: string,
+  targetProjectId: string,
+  format: 'bibtex' | 'ris',
+  editor: IngestionActor,
+): Promise<void> {
+  const exported = await service.exportBibliography(editor, {
+    projectId: sourceProjectId,
+    format,
+  });
+  expect(exported.ok && ExportBibliographyResponseSchema.safeParse(exported.value).success).toBe(
+    true,
+  );
+  if (!exported.ok) {
+    return;
+  }
+  expect(exported.value.entryCount).toBe(2);
+  const reimported = await service.importBibliography(editor, {
+    projectId: targetProjectId,
+    format,
+    content: exported.value.content,
+  });
+  expect(reimported.ok).toBe(true);
+  if (reimported.ok) {
+    assertPreservedEntries(reimported.value.imported, format === 'bibtex');
+  }
+}
 
 async function assertBibliographyRoundTrip(
   service: IngestionServiceLike,
@@ -116,27 +180,23 @@ async function assertBibliographyRoundTrip(
   expect(risImported.ok).toBe(true);
   if (risImported.ok) {
     expect(risImported.value.imported).toHaveLength(1);
-    expect(risImported.value.imported[0]?.doi).toBe('10.1007/s11192-023-04567-8');
+    expect(risImported.value.imported[0]?.doi).toBe(LONG_RIS_DOI);
   }
 
-  const bibExported = await service.exportBibliography(editor, { projectId, format: 'bibtex' });
-  expect(
-    bibExported.ok && ExportBibliographyResponseSchema.safeParse(bibExported.value).success,
-  ).toBe(true);
-  if (bibExported.ok) {
-    expect(bibExported.value.entryCount).toBe(2);
-    expect(bibExported.value.content).toContain('chen2024');
-    expect(bibExported.value.content).toContain('10.1145/3544548.3581234');
-  }
-
-  const risExported = await service.exportBibliography(editor, { projectId, format: 'ris' });
-  expect(
-    risExported.ok && ExportBibliographyResponseSchema.safeParse(risExported.value).success,
-  ).toBe(true);
-  if (risExported.ok) {
-    expect(risExported.value.entryCount).toBe(2);
-    expect(risExported.value.content).toContain('10.1007/s11192-023-04567-8');
-  }
+  await assertExportAndReimport(
+    service,
+    projectId,
+    '66666666-6666-4666-8666-666666666666',
+    'bibtex',
+    editor,
+  );
+  await assertExportAndReimport(
+    service,
+    projectId,
+    '77777777-7777-4777-8777-777777777777',
+    'ris',
+    editor,
+  );
 }
 
 describe('Phase 2.3 Multi-channel ingestion (DOI, BibTeX/RIS, PDF) acceptance', () => {

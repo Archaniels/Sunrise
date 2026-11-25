@@ -241,8 +241,50 @@ function stripDoiPrefix(value: string): string {
   return value.replace(DOI_HTTP_PREFIX_PATTERN, '').replace(DOI_SCHEME_PREFIX_PATTERN, '').trim();
 }
 
+const TRAILING_PUNCTUATION = new Set(['.', ',', ';']);
+const CLOSING_TO_OPENING: Readonly<Record<string, string>> = {
+  ')': '(',
+  ']': '[',
+  '}': '{',
+};
+
+function hasUnmatchedClosingDelimiter(value: string, openChar: string, closeChar: string): boolean {
+  let balance = 0;
+  for (const ch of value) {
+    if (ch === openChar) {
+      balance += 1;
+    } else if (ch === closeChar) {
+      balance -= 1;
+    }
+  }
+  return balance < 0;
+}
+
+function trimOneTrailingDelimiter(value: string): string {
+  const last = value.at(-1);
+  if (last === undefined) {
+    return value;
+  }
+  if (TRAILING_PUNCTUATION.has(last)) {
+    return value.slice(0, -1);
+  }
+  const openChar = CLOSING_TO_OPENING[last];
+  if (openChar !== undefined && hasUnmatchedClosingDelimiter(value, openChar, last)) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
+
 function stripTrailingDoiPunctuation(value: string): string {
-  return value.replace(/[.,;]+$/, '');
+  let current = value;
+  while (current.length > 0) {
+    const next = trimOneTrailingDelimiter(current);
+    if (next === current) {
+      return current;
+    }
+    current = next;
+  }
+  return current;
 }
 
 export function normalizeDoi(raw: string): string | null {
@@ -258,7 +300,7 @@ export function normalizeTitleForMatching(title: string): string {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -272,6 +314,17 @@ export function normalizeAuthorFamily(author: ReferenceAuthor | undefined): stri
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
+}
+
+export function normalizeAuthorFamilyForMatching(author: ReferenceAuthor | undefined): string {
+  if (!author) {
+    return '';
+  }
+  return author.family
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
 }
 
 function toAlphabeticSuffix(collisionIndex: number): string {
@@ -290,7 +343,8 @@ export function generateDeterministicCiteKey(
   year: number | null,
   existingKeys: ReadonlySet<string>,
 ): string {
-  const familyToken = normalizeAuthorFamily(authors[0]) || 'untitled';
+  const rawFamilyToken = normalizeAuthorFamily(authors[0]) || 'untitled';
+  const familyToken = /^[a-z]/.test(rawFamilyToken) ? rawFamilyToken : `ref${rawFamilyToken}`;
   const yearToken = year !== null ? String(year) : 'nd';
   const baseKey = `${familyToken}${yearToken}`.slice(0, 72);
   const normalizedExisting = new Set<string>();

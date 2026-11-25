@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
   CanonicalDoiSchema,
   HttpUrlSchema,
-  normalizeAuthorFamily,
+  normalizeAuthorFamilyForMatching,
   normalizeDoi,
   normalizeTitleForMatching,
   ReferenceAuthorSchema,
@@ -152,6 +152,9 @@ export type ProviderExecutionSummary = z.infer<typeof ProviderExecutionSummarySc
 export const FederatedSearchResponseSchema = z.object({
   query: z.string().trim().min(1).max(500),
   totalResults: z.number().int().min(0),
+  totalResultsIsEstimate: z.boolean().optional(),
+  hasMore: z.boolean().optional(),
+  upstreamFetchCapReached: z.boolean().optional(),
   cached: z.boolean(),
   results: z.array(FederatedPaperResultSchema),
   warnings: z.array(ProviderWarningSchema),
@@ -244,7 +247,7 @@ function computeAvailableActions(
 
 function createInitialFederatedResult(candidate: ProviderPaperCandidate): FederatedPaperResult {
   const canonicalDoi = candidate.doi !== null ? normalizeDoi(candidate.doi) : null;
-  const firstAuthor = normalizeAuthorFamily(candidate.authors[0]) || 'unknown';
+  const firstAuthor = normalizeAuthorFamilyForMatching(candidate.authors[0]) || 'unknown';
   const yearToken = candidate.year !== null ? String(candidate.year) : 'nd';
   const dedupeKey =
     canonicalDoi !== null
@@ -342,12 +345,16 @@ function isTitleAuthorYearMatch(
   if (existing.year === null || incoming.year === null || existing.year !== incoming.year) {
     return false;
   }
-  const existingAuthor = normalizeAuthorFamily(existing.authors[0]);
-  const incomingAuthor = normalizeAuthorFamily(incoming.authors[0]);
+  const existingAuthor = normalizeAuthorFamilyForMatching(existing.authors[0]);
+  const incomingAuthor = normalizeAuthorFamilyForMatching(incoming.authors[0]);
   if (existingAuthor.length === 0 || existingAuthor !== incomingAuthor) {
     return false;
   }
   return computeTitleSimilarity(existing.title, incoming.title) >= TITLE_SIMILARITY_THRESHOLD;
+}
+
+function hasConflictingCanonicalDoi(groupDoi: string | null, incomingDoi: string | null): boolean {
+  return groupDoi !== null && incomingDoi !== null && groupDoi !== incomingDoi;
 }
 
 function findMatchingGroupIndex(
@@ -361,7 +368,11 @@ function findMatchingGroupIndex(
       return { index: doiIndex, reason: 'doi' };
     }
   }
-  const fuzzyIndex = groups.findIndex((group) => isTitleAuthorYearMatch(group, candidate));
+  const fuzzyIndex = groups.findIndex(
+    (group) =>
+      !hasConflictingCanonicalDoi(group.doi, incomingDoi) &&
+      isTitleAuthorYearMatch(group, candidate),
+  );
   if (fuzzyIndex !== -1) {
     return { index: fuzzyIndex, reason: 'title_author_year' };
   }

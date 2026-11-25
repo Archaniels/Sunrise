@@ -109,7 +109,11 @@ async function assertCiteKeyDisambiguation(
     sourceProvider: 'crossref',
   });
   expect(secondSameAuthorYear.ok).toBe(true);
-  if (secondSameAuthorYear.ok && secondSameAuthorYear.value.status === 'created') {
+  if (!secondSameAuthorYear.ok) {
+    return '';
+  }
+  expect(secondSameAuthorYear.value.status).toBe('created');
+  if (secondSameAuthorYear.value.status === 'created') {
     expect(secondSameAuthorYear.value.reference.citeKey).toBe('smith2024b');
   }
   return firstCreate.value.reference.id;
@@ -187,6 +191,76 @@ async function assertReferencePdfAttachmentAndRbac(
   }
 }
 
+async function assertProjectScopedUniqueness(service: ReferenceServiceLike): Promise<void> {
+  const projectA = '11111111-1111-4111-8111-111111111111';
+  const projectB = '99999999-9999-4999-8999-999999999999';
+  const editor: ReferenceActor = {
+    userId: '33333333-3333-4333-8333-333333333333',
+    role: 'editor',
+  };
+
+  const seed = await service.createReference(editor, {
+    projectId: projectA,
+    citeKey: 'custom2024',
+    title: 'Project-Scoped Uniqueness Study',
+    authors: [{ family: 'Smith', given: 'Jane', displayName: 'Jane Smith', orcid: null }],
+    year: 2024,
+    doi: '10.1038/s41586-024-99999-9',
+    sourceProvider: 'manual',
+  });
+  expect(seed.ok && seed.value.status === 'created').toBe(true);
+
+  const secondInA = await service.createReference(editor, {
+    projectId: projectA,
+    citeKey: 'other2024',
+    title: 'Second Paper In Same Project',
+    authors: [{ family: 'Chen', given: 'Wei', displayName: 'Wei Chen', orcid: null }],
+    year: 2024,
+    doi: '10.1038/s41586-024-88888-8',
+    sourceProvider: 'manual',
+  });
+  expect(secondInA.ok && secondInA.value.status === 'created').toBe(true);
+  if (!secondInA.ok || secondInA.value.status !== 'created') {
+    return;
+  }
+
+  const sameProjectDupKeyUpdate = await service.updateReference(
+    editor,
+    projectA,
+    secondInA.value.reference.id,
+    { citeKey: 'CUSTOM2024' },
+  );
+  expect(sameProjectDupKeyUpdate.ok).toBe(false);
+  if (!sameProjectDupKeyUpdate.ok) {
+    expect(sameProjectDupKeyUpdate.error.code).toBe('CONFLICT');
+  }
+
+  const sameProjectDupDoi = await service.createReference(editor, {
+    projectId: projectA,
+    title: 'Duplicate DOI In Same Project',
+    authors: [{ family: 'Smith', given: 'Jane', displayName: 'Jane Smith', orcid: null }],
+    year: 2024,
+    doi: '10.1038/s41586-024-99999-9',
+    sourceProvider: 'manual',
+  });
+  expect(sameProjectDupDoi.ok && sameProjectDupDoi.value.status === 'conflict').toBe(true);
+
+  const otherProjectAllowed = await service.createReference(editor, {
+    projectId: projectB,
+    citeKey: 'custom2024',
+    title: 'Project-Scoped Uniqueness Study',
+    authors: [{ family: 'Smith', given: 'Jane', displayName: 'Jane Smith', orcid: null }],
+    year: 2024,
+    doi: '10.1038/s41586-024-99999-9',
+    sourceProvider: 'manual',
+  });
+  expect(otherProjectAllowed.ok && otherProjectAllowed.value.status === 'created').toBe(true);
+  if (otherProjectAllowed.ok && otherProjectAllowed.value.status === 'created') {
+    expect(otherProjectAllowed.value.reference.citeKey).toBe('custom2024');
+    expect(otherProjectAllowed.value.reference.doi).toBe('10.1038/s41586-024-99999-9');
+  }
+}
+
 describe('Phase 2.2 Project bibliography database and Reference Manager UI acceptance', () => {
   it('provides SQL migration defining project references table with mandatory columns and unique constraints', () => {
     const migrationsDir = join(REPO_ROOT, 'apps/api/src/db/migrations');
@@ -204,6 +278,30 @@ describe('Phase 2.2 Project bibliography database and Reference Manager UI accep
     expect(allSql).toMatch(/local_pdf_file_id/i);
     expect(allSql).toMatch(/citation_count/i);
     expect(allSql).toMatch(/source_provider/i);
+    expect(allSql).toMatch(
+      /CREATE\s+UNIQUE\s+INDEX[\s\S]*ON\s+(?:project_references|"references")\s*\(\s*project_id\s*,\s*LOWER\(\s*cite_key\s*\)\s*\)/i,
+    );
+    expect(allSql).toMatch(
+      /CREATE\s+UNIQUE\s+INDEX[\s\S]*ON\s+(?:project_references|"references")\s*\(\s*project_id\s*,\s*doi\s*\)[\s\S]*WHERE\s+doi\s+IS\s+NOT\s+NULL/i,
+    );
+  });
+
+  it('rejects duplicate citeKey and DOI within the same project while allowing them in different projects', async () => {
+    const servicePath = join(REPO_ROOT, 'apps/api/src/services/reference-service.ts');
+    expect(existsSync(servicePath), 'Missing apps/api/src/services/reference-service.ts').toBe(
+      true,
+    );
+
+    const loaded: unknown = await import(pathToFileURL(servicePath).href);
+    expect(hasFunctionProp(loaded, 'createInMemoryReferenceService')).toBe(true);
+    if (!hasFunctionProp(loaded, 'createInMemoryReferenceService')) {
+      return;
+    }
+
+    const factory = (
+      loaded as { readonly createInMemoryReferenceService: () => ReferenceServiceLike }
+    ).createInMemoryReferenceService;
+    await assertProjectScopedUniqueness(factory());
   });
 
   it('supports reference CRUD, deterministic citeKey disambiguation, duplicate DOI conflict/merge, PDF attachment, and RBAC', async () => {

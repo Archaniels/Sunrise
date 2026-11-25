@@ -131,6 +131,7 @@ export const IngestPdfResponseSchema = z.object({
   needsLlmFallback: z.boolean(),
   reference: ReferenceSchema.nullable(),
   conflict: DuplicateReferenceConflictSchema.nullable(),
+  unverifiedCandidateDois: z.array(CanonicalDoiSchema).max(20).optional(),
 });
 
 export type IngestPdfResponse = z.infer<typeof IngestPdfResponseSchema>;
@@ -145,8 +146,7 @@ export function extractDoisFromText(text: string): string[] {
   const unique = new Set<string>();
   const ordered: string[] = [];
   for (const rawMatch of matches) {
-    const trimmed = rawMatch.replace(/[)\]}.,;]+$/, '');
-    const normalized = normalizeDoi(trimmed);
+    const normalized = normalizeDoi(rawMatch);
     if (normalized !== null && !unique.has(normalized)) {
       unique.add(normalized);
       ordered.push(normalized);

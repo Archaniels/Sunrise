@@ -18,12 +18,20 @@ import {
   type Phase1SunrisePreloadApi,
 } from './phase1-contracts.js';
 
+export const PHASE2_IPC_EVENT_CHANNELS = {
+  PDF_DEEP_LINK_OPENED: 'pdf:deepLinkOpened',
+} as const;
+
+export type Phase2IpcEventChannelName =
+  (typeof PHASE2_IPC_EVENT_CHANNELS)[keyof typeof PHASE2_IPC_EVENT_CHANNELS];
+
 export const PHASE2_IPC_CHANNELS = {
   ...PHASE1_IPC_CHANNELS,
   REFERENCES_COPY_CITATION: 'references:copyCitation',
   PDF_GET_VIEWER_STATE: 'pdf:getViewerState',
   PDF_SAVE_VIEWER_STATE: 'pdf:saveViewerState',
   PDF_OPEN_DEEP_LINK: 'pdf:openDeepLink',
+  PDF_DEEP_LINK_OPENED: PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED,
 } as const;
 
 export type Phase2IpcChannelName = (typeof PHASE2_IPC_CHANNELS)[keyof typeof PHASE2_IPC_CHANNELS];
@@ -58,6 +66,16 @@ export const Phase2IpcChannelContracts = {
   },
 } as const;
 
+export const Phase2IpcEventContracts = {
+  [PHASE2_IPC_EVENT_CHANNELS.PDF_DEEP_LINK_OPENED]: {
+    payload: PdfDeepLinkTargetSchema,
+  },
+} as const;
+
+export type PdfDeepLinkOpenedListener = (target: PdfDeepLinkTarget) => void;
+
+export type IpcUnsubscribe = () => void;
+
 export interface Phase2SunrisePreloadApi extends Phase1SunrisePreloadApi {
   readonly references: {
     readonly copyCitation: (payload: PdfCopyCitationPayload) => Promise<Result<OkBooleanOutput>>;
@@ -68,5 +86,6 @@ export interface Phase2SunrisePreloadApi extends Phase1SunrisePreloadApi {
     ) => Promise<Result<PdfViewerState | null>>;
     readonly saveViewerState: (state: PdfViewerState) => Promise<Result<PdfViewerState>>;
     readonly openDeepLink: (target: PdfDeepLinkTarget) => Promise<Result<PdfDeepLinkTarget>>;
+    readonly onDeepLinkOpened?: (listener: PdfDeepLinkOpenedListener) => IpcUnsubscribe;
   };
 }

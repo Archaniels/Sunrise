@@ -227,6 +227,7 @@ export {
   HttpUrlSchema,
   ListReferencesQuerySchema,
   normalizeAuthorFamily,
+  normalizeAuthorFamilyForMatching,
   normalizeDoi,
   normalizeTitleForMatching,
   OrcidSchema,
@@ -369,8 +370,13 @@ export {
 
 export {
   PHASE2_IPC_CHANNELS,
+  PHASE2_IPC_EVENT_CHANNELS,
   PHASE2_PRELOAD_EXPOSED_KEYS,
   Phase2IpcChannelContracts,
+  Phase2IpcEventContracts,
+  type IpcUnsubscribe,
+  type PdfDeepLinkOpenedListener,
   type Phase2IpcChannelName,
+  type Phase2IpcEventChannelName,
   type Phase2SunrisePreloadApi,
 } from './ipc/phase2-contracts.js';
