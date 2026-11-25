@@ -50,5 +50,17 @@
       }
     }
   },
-  "pendingHumanGateDeltas": {}
+  "pendingHumanGateDeltas": {
+    "phase2Stage2": {
+      "reason": "Phase 2 (2.1-2.4) federated PubMed XML & PDF XMP parsing, BibTeX/RIS round-trip parsing/serialization, unified Mozilla pdf.js text extraction and academic PDF viewer, and headless Reference Manager table. Zero native addons or postinstall scripts; no pnpm-workspace.yaml allowBuilds additions required.",
+      "packages": {
+        "fast-xml-parser": "Zero-native pure-JS XML parser for PubMed E-utilities efetch XML (2.1) and embedded PDF XMP metadata packets (2.3); preferred over legacy callback-based xml2js and brittle regex XML parsing",
+        "@citation-js/core": "Modular ESM-native bibliography core with built-in TypeScript types for BibTeX/RIS normalization in apps/api (2.3); preferred over citation-js meta-package which runs a patch-package postinstall script and bundles unused Phase 3 plugins",
+        "@citation-js/plugin-bibtex": "Bidirectional BibTeX parser and Zotero-compatible serializer plugin for @citation-js/core in apps/api (2.3); preferred over hand-rolled BibTeX grammars",
+        "@citation-js/plugin-ris": "Bidirectional RIS parser and serializer plugin for @citation-js/core in apps/api (2.3); preferred over ad-hoc line-by-line RIS parsers",
+        "pdfjs-dist": "Official Mozilla pdf.js ESM engine with native TypeScript types used in apps/desktop for the integrated academic PDF viewer (2.4) and in apps/api legacy Node build for deterministic PDF text and XMP metadata extraction (2.3, reusable for Phase 5 RAG); preferred over pdf-parse which bundles outdated pdf.js v1.10 with CommonJS quirks",
+        "@tanstack/react-table": "Headless strictly-typed table state engine for the Reference Manager sortable/filterable workspace table in apps/desktop (2.2) and reused in Phase 6 CSV/XLSX grid; preferred over heavy commercial ag-grid-react"
+      }
+    }
+  }
 }

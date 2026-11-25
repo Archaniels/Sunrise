@@ -1,7 +1,7 @@
 {
   "project": "sunrise",
   "schemaVersion": "1.0.0",
-  "updatedAt": "2026-11-24T16:31:00+07:00",
+  "updatedAt": "2026-11-25T09:10:00+07:00",
   "activePhase": 1,
   "phases": [
     {
@@ -111,9 +111,9 @@
         {
           "id": "2.1",
           "title": "Federated Literature Search & Deduplication Engine",
-          "status": "not_started",
+          "status": "stage1_ready",
           "stages": {
-            "stage1ContractsTests": "pending",
+            "stage1ContractsTests": "done",
             "humanGate": "pending",
             "stage2Implementation": "pending",
             "stage3Verification": "pending"
@@ -122,9 +122,9 @@
         {
           "id": "2.2",
           "title": "Project Bibliography Database & Reference Manager UI",
-          "status": "not_started",
+          "status": "stage1_ready",
           "stages": {
-            "stage1ContractsTests": "pending",
+            "stage1ContractsTests": "done",
             "humanGate": "pending",
             "stage2Implementation": "pending",
             "stage3Verification": "pending"
@@ -133,9 +133,9 @@
         {
           "id": "2.3",
           "title": "Multi-Channel Ingestion: DOI, BibTeX/RIS & Deterministic PDF Extraction",
-          "status": "not_started",
+          "status": "stage1_ready",
           "stages": {
-            "stage1ContractsTests": "pending",
+            "stage1ContractsTests": "done",
             "humanGate": "pending",
             "stage2Implementation": "pending",
             "stage3Verification": "pending"
@@ -144,9 +144,9 @@
         {
           "id": "2.4",
           "title": "Integrated Academic PDF Viewer (pdf.js)",
-          "status": "not_started",
+          "status": "stage1_ready",
           "stages": {
-            "stage1ContractsTests": "pending",
+            "stage1ContractsTests": "done",
             "humanGate": "pending",
             "stage2Implementation": "pending",
             "stage3Verification": "pending"
