@@ -36,7 +36,6 @@ import {
   type Result,
 } from '@sunrise/shared';
 import { XMLParser } from 'fast-xml-parser';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { parseCrossrefWork, parseOpenAlexWork } from './literature-service.js';
 import { createInMemoryReferenceService, type ReferenceService } from './reference-service.js';
 
@@ -383,11 +382,21 @@ async function resolvePdfBytes(
     return ok(Uint8Array.from(Buffer.from(parsed.pdfBase64, 'base64')));
   }
   if (deps.fetchPdfBytes !== undefined) {
-    const fetched = await deps.fetchPdfBytes(parsed.projectId, parsed.localPdfFileId);
-    if (fetched !== null) {
-      return ok(fetched);
+    try {
+      const fetched = await deps.fetchPdfBytes(parsed.projectId, parsed.localPdfFileId);
+      if (fetched !== null) {
+        return ok(fetched);
+      }
+      return err({
+        code: 'NOT_FOUND',
+        message: 'PDF bytes could not be loaded for localPdfFileId',
+      });
+    } catch {
+      return err({
+        code: 'DEPENDENCY_UNAVAILABLE',
+        message: 'Failed to retrieve PDF bytes from object storage',
+      });
     }
-    return err({ code: 'NOT_FOUND', message: 'PDF bytes could not be loaded for localPdfFileId' });
   }
   return err({
     code: 'VALIDATION_ERROR',
@@ -934,6 +943,7 @@ function readTrimmedStringField(
 export async function extractPdfContentWithPdfJs(
   pdfBytes: Uint8Array,
 ): Promise<ExtractedPdfContent> {
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const loadingTask = getDocument({
     data: pdfBytes,
     useSystemFonts: true,

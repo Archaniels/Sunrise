@@ -527,6 +527,18 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     });
     expect(crossRefAnn.statusCode).toBe(404);
 
+    const crossIngestPdf = await app.inject({
+      method: 'POST',
+      url: `/projects/${projectAId}/ingestion/pdf`,
+      headers: aliceHeader,
+      payload: {
+        localPdfFileId: fileBId,
+        fileName: 'b.pdf',
+        pdfBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+      },
+    });
+    expect(crossIngestPdf.statusCode).toBe(404);
+
     const crossListAnn = await app.inject({
       method: 'GET',
       url: `/projects/${projectAId}/files/${fileBId}/annotations`,
@@ -611,6 +623,23 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     expect(corruptOutcome.ok).toBe(false);
     if (!corruptOutcome.ok) {
       expect(corruptOutcome.error.code).toBe('VALIDATION_ERROR');
+    }
+
+    const throwingFetchService = createIngestionService({
+      hydrateByDoi: async () => null,
+      extractPdfContent: extractPdfContentWithPdfJs,
+      fetchPdfBytes: async () => {
+        throw new Error('s3 timeout');
+      },
+    });
+    const fetchErrOutcome = await throwingFetchService.ingestPdf(editor, {
+      projectId: '22222222-2222-4222-8222-222222222222',
+      localPdfFileId: '33333333-3333-4333-8333-333333333333',
+      fileName: 'remote.pdf',
+    });
+    expect(fetchErrOutcome.ok).toBe(false);
+    if (!fetchErrOutcome.ok) {
+      expect(fetchErrOutcome.error.code).toBe('DEPENDENCY_UNAVAILABLE');
     }
 
     const throwingDoiOutcome = await corruptPdfService.ingestDoi(editor, {

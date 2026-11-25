@@ -50,11 +50,37 @@ function resolveIngestionStatusCode(status: string): number {
   return status === 'created' ? 201 : 200;
 }
 
+export interface IngestionRouteGuardOptions {
+  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+}
+
+function readObjectBody(body: unknown): object {
+  return typeof body === 'object' && body !== null ? body : {};
+}
+
+async function ensureIngestionFileOwned(
+  reply: FastifyReply,
+  guards: IngestionRouteGuardOptions | undefined,
+  projectId: string,
+  fileId: string,
+): Promise<boolean> {
+  if (!guards?.assertFileInProject) {
+    return true;
+  }
+  const owned = await guards.assertFileInProject(projectId, fileId);
+  if (!owned) {
+    sendErrorReply(reply, 'NOT_FOUND', 'File not found in project');
+    return false;
+  }
+  return true;
+}
+
 export function registerIngestionRoutes(
   app: FastifyInstance,
   authService: AuthService,
   projectService: ProjectService,
   ingestionService: IngestionService,
+  guards?: IngestionRouteGuardOptions,
 ): void {
   app.post('/projects/:projectId/ingestion/doi', async (request, reply) => {
     const projectId = readUuidParam(request.params, 'projectId');
@@ -168,14 +194,16 @@ export function registerIngestionRoutes(
     if (!actor) {
       return reply;
     }
-    const bodyObj = typeof request.body === 'object' && request.body !== null ? request.body : {};
-    const parsed = IngestPdfInputSchema.safeParse({ ...bodyObj, projectId });
+    const parsed = IngestPdfInputSchema.safeParse({ ...readObjectBody(request.body), projectId });
     if (!parsed.success) {
       return sendErrorReply(
         reply,
         'VALIDATION_ERROR',
         parsed.error.issues[0]?.message ?? 'Invalid PDF ingestion payload',
       );
+    }
+    if (!(await ensureIngestionFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
+      return reply;
     }
     const result = await ingestionService.ingestPdf(actor, parsed.data);
     if (!result.ok) {

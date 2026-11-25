@@ -85,6 +85,7 @@ function registerPhase2ServerRoutes(
       phase1Services.authService,
       phase1Services.projectService,
       phase2Services.ingestionService,
+      guards,
     );
   }
   if (phase2Services.pdfAnnotationService) {
