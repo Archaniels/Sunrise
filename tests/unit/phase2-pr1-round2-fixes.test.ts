@@ -305,4 +305,51 @@ describe('PR #1 CodeRabbit Round 2 unit regression coverage', () => {
     expect(source).toContain('[state.projectId, state.fileId, state.currentPage]');
     expect(source).toContain('resolveEffectiveSelection(activeSelection, localSelection, state)');
   });
+
+  it('accepts whitespace after @ in BibTeX headers while preserving RIS abstract handling (CR3-1)', async () => {
+    const service = createIngestionService({
+      hydrateByDoi: async () => null,
+      extractPdfContent: async () => ({ text: '', xmpTitle: null, xmpAuthors: [], xmpDoi: null }),
+    });
+
+    const spacedBibtex = await service.importBibliography(EDITOR_ACTOR, {
+      projectId: PROJECT_A,
+      format: 'bibtex',
+      content: '@ article{spaced2024, title = {Spaced BibTeX Header}, year = {2024}}',
+    });
+    expect(spacedBibtex.ok).toBe(true);
+    if (spacedBibtex.ok) {
+      expect(spacedBibtex.value.imported).toHaveLength(1);
+      expect(spacedBibtex.value.imported[0]?.title).toBe('Spaced BibTeX Header');
+    }
+
+    const risWithSpacedAbstract = [
+      'TY  - JOUR',
+      'TI  - RIS Record With Spaced BibTeX In Abstract',
+      'AU  - Patel, Asha',
+      'PY  - 2024',
+      'AB  - Example inline snippet: @ article{key, title={Embedded}} inside abstract.',
+      'ER  - ',
+    ].join('\n');
+    const risOutcome = await service.importBibliography(EDITOR_ACTOR, {
+      projectId: PROJECT_A,
+      format: 'ris',
+      content: risWithSpacedAbstract,
+    });
+    expect(risOutcome.ok).toBe(true);
+    if (risOutcome.ok) {
+      expect(risOutcome.value.imported).toHaveLength(1);
+      expect(risOutcome.value.imported[0]?.title).toBe('RIS Record With Spaced BibTeX In Abstract');
+    }
+
+    const spacedBibtexAsRis = await service.importBibliography(EDITOR_ACTOR, {
+      projectId: PROJECT_A,
+      format: 'ris',
+      content: '@ article{wrong2024, title = {Mismatched Spaced BibTeX}, year = {2024}}',
+    });
+    expect(spacedBibtexAsRis.ok).toBe(false);
+    if (!spacedBibtexAsRis.ok) {
+      expect(spacedBibtexAsRis.error.code).toBe('VALIDATION_ERROR');
+    }
+  });
 });

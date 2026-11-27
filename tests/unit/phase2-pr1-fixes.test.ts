@@ -236,8 +236,8 @@ describe('PR #1 CodeRabbit fixes — Literature Search (#1-#7)', () => {
   it('aborts PubMed EFetch on attempt timeout and honors Retry-After budget on 429 (#6, #7)', async () => {
     let efetchAborted = false;
     const slowPubMedFetch: typeof fetch = async (input, init) => {
-      const url = readRequestUrl(input);
-      if (url.includes('esearch.fcgi')) {
+      const parsedUrl = new URL(readRequestUrl(input));
+      if (parsedUrl.pathname.endsWith('/esearch.fcgi')) {
         return new Response(JSON.stringify({ esearchresult: { count: '1', idlist: ['12345'] } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -307,8 +307,8 @@ describe('PR #1 CodeRabbit fixes — Literature Search (#1-#7)', () => {
 describe('PR #1 CodeRabbit fixes — Ingestion & Controllers (#8-#15)', () => {
   it('distinguishes DOI provider outages (503) from authoritative misses (404) (#8)', async () => {
     const outageFetch: typeof fetch = async (input) => {
-      const url = readRequestUrl(input);
-      return url.includes('crossref')
+      const parsedUrl = new URL(readRequestUrl(input));
+      return parsedUrl.hostname === 'api.crossref.org'
         ? new Response(null, { status: 503 })
         : new Response(null, { status: 404 });
     };

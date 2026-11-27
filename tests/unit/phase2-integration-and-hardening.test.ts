@@ -586,7 +586,7 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     const fallbackFetch: typeof fetch = async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       requestedUrls.push(url);
-      if (url.includes('api.crossref.org')) {
+      if (new URL(url).hostname === 'api.crossref.org') {
         return new Response(null, { status: 404 });
       }
       return new Response(
@@ -605,9 +605,15 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
     const hydrated = await hydrator('10.1234/fallback-2025');
     expect(hydrated?.provider).toBe('openalex');
     expect(hydrated?.candidate.title).toBe('OpenAlex Fallback Paper');
-    expect(requestedUrls.some((url) => url.includes('api.crossref.org'))).toBe(true);
+    expect(requestedUrls.some((url) => new URL(url).hostname === 'api.crossref.org')).toBe(true);
     expect(
-      requestedUrls.some((url) => url.includes('api.openalex.org/works/https://doi.org/')),
+      requestedUrls.some((url) => {
+        const parsed = new URL(url);
+        return (
+          parsed.hostname === 'api.openalex.org' &&
+          parsed.pathname.startsWith('/works/https://doi.org/')
+        );
+      }),
     ).toBe(true);
 
     const corruptPdfService = createIngestionService({
