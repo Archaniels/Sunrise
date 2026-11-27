@@ -569,6 +569,22 @@ describe('Phase 2 shared contracts', () => {
         expect(parsedPdf.data.allowByokFallback).toBe(false);
       }
     });
+
+    it('preserves balanced DOI endings and trims pathological trailing delimiters in linear time', () => {
+      expect(normalizeDoi('10.1234/example(2024)')).toBe('10.1234/example(2024)');
+      expect(normalizeDoi('10.1234/example(2024))).;')).toBe('10.1234/example(2024)');
+      expect(normalizeDoi('10.1234/example(2024)]]')).toBe('10.1234/example(2024)');
+      expect(normalizeDoi('10.1234/example(2024)}}')).toBe('10.1234/example(2024)');
+      expect(normalizeDoi(`10.1234/${'a'.repeat(300)}`)).toBeNull();
+
+      const pathologicalDoi = `10.1234/example(2024)${')'.repeat(100_000)}.`;
+      const startedAt = performance.now();
+      const extracted = extractDoisFromText(`See reference (${pathologicalDoi}) for details.`);
+      const elapsedMs = performance.now() - startedAt;
+
+      expect(extracted).toEqual(['10.1234/example(2024)']);
+      expect(elapsedMs).toBeLessThan(1000);
+    });
   });
 
   describe('2.4 Integrated Academic PDF Viewer and Phase 2 IPC contracts', () => {

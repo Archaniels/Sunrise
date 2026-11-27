@@ -23,6 +23,22 @@ interface ReferenceActor {
   readonly role: ProjectRole;
 }
 
+interface ReferenceServiceOptionsLike {
+  readonly now?: () => Date;
+  readonly assertFileInProject?: (projectId: string, fileId: string) => Promise<boolean>;
+}
+
+interface ReferenceRepositoryLike {
+  readonly findById: (referenceId: string) => Promise<Reference | null>;
+  readonly findByProjectAndDoi: (projectId: string, doi: string) => Promise<Reference | null>;
+  readonly listByProject: (projectId: string) => Promise<Reference[]>;
+  readonly save: (reference: Reference) => Promise<Reference>;
+  readonly deleteById: (projectId: string, referenceId: string) => Promise<boolean>;
+  readonly runInTransaction?: <T>(
+    fn: (txRepo: ReferenceRepositoryLike) => Promise<T>,
+  ) => Promise<T>;
+}
+
 interface ReferenceServiceLike {
   readonly createReference: (
     actor: ReferenceActor,
@@ -56,6 +72,53 @@ interface ReferenceServiceLike {
     projectId: string,
     referenceId: string,
   ) => Promise<Result<{ readonly deleted: true }>>;
+  readonly runBatch?: <T>(fn: (txService: ReferenceServiceLike) => Promise<T>) => Promise<T>;
+}
+
+interface ReferenceServiceModuleLike {
+  readonly createInMemoryReferenceRepository: () => ReferenceRepositoryLike;
+  readonly createReferenceService: (
+    repo: ReferenceRepositoryLike,
+    options?: ReferenceServiceOptionsLike,
+  ) => ReferenceServiceLike;
+  readonly createInMemoryReferenceService: (
+    options?: ReferenceServiceOptionsLike,
+  ) => ReferenceServiceLike;
+}
+
+function createNonTransactionalReferenceRepository(): ReferenceRepositoryLike {
+  const store = new Map<string, Reference>();
+  return {
+    findById: async (referenceId) => store.get(referenceId) ?? null,
+    findByProjectAndDoi: async (projectId, doi) => {
+      for (const ref of store.values()) {
+        if (ref.projectId === projectId && ref.doi === doi) {
+          return ref;
+        }
+      }
+      return null;
+    },
+    listByProject: async (projectId) => {
+      const result: Reference[] = [];
+      for (const ref of store.values()) {
+        if (ref.projectId === projectId) {
+          result.push(ref);
+        }
+      }
+      return result;
+    },
+    save: async (reference) => {
+      store.set(reference.id, reference);
+      return reference;
+    },
+    deleteById: async (projectId, referenceId) => {
+      const existing = store.get(referenceId);
+      if (!existing || existing.projectId !== projectId) {
+        return false;
+      }
+      return store.delete(referenceId);
+    },
+  };
 }
 
 interface ReferenceManagerControllerLike {
@@ -278,12 +341,22 @@ describe('Phase 2.2 Project bibliography database and Reference Manager UI accep
     expect(allSql).toMatch(/local_pdf_file_id/i);
     expect(allSql).toMatch(/citation_count/i);
     expect(allSql).toMatch(/source_provider/i);
-    expect(allSql).toMatch(
-      /CREATE\s+UNIQUE\s+INDEX[\s\S]*ON\s+(?:project_references|"references")\s*\(\s*project_id\s*,\s*LOWER\(\s*cite_key\s*\)\s*\)/i,
+    const statements = allSql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    const hasUniqueCiteKeyIndex = statements.some((statement) =>
+      /^CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+ON\s+(?:project_references|"references")\s*\(\s*project_id\s*,\s*LOWER\(\s*cite_key\s*\)\s*\)$/i.test(
+        statement,
+      ),
     );
-    expect(allSql).toMatch(
-      /CREATE\s+UNIQUE\s+INDEX[\s\S]*ON\s+(?:project_references|"references")\s*\(\s*project_id\s*,\s*doi\s*\)[\s\S]*WHERE\s+doi\s+IS\s+NOT\s+NULL/i,
+    const hasUniqueDoiIndex = statements.some((statement) =>
+      /^CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+ON\s+(?:project_references|"references")\s*\(\s*project_id\s*,\s*doi\s*\)\s+WHERE\s+doi\s+IS\s+NOT\s+NULL$/i.test(
+        statement,
+      ),
     );
+    expect(hasUniqueCiteKeyIndex).toBe(true);
+    expect(hasUniqueDoiIndex).toBe(true);
   });
 
   it('rejects duplicate citeKey and DOI within the same project while allowing them in different projects', async () => {
@@ -298,9 +371,7 @@ describe('Phase 2.2 Project bibliography database and Reference Manager UI accep
       return;
     }
 
-    const factory = (
-      loaded as { readonly createInMemoryReferenceService: () => ReferenceServiceLike }
-    ).createInMemoryReferenceService;
+    const factory = (loaded as ReferenceServiceModuleLike).createInMemoryReferenceService;
     await assertProjectScopedUniqueness(factory());
   });
 
@@ -316,13 +387,12 @@ describe('Phase 2.2 Project bibliography database and Reference Manager UI accep
       return;
     }
 
-    const factory = (
-      loaded as { readonly createInMemoryReferenceService: () => ReferenceServiceLike }
-    ).createInMemoryReferenceService;
-    const service = factory();
-
     const projectId = '11111111-1111-4111-8111-111111111111';
     const pdfFileId = '22222222-2222-4222-8222-222222222222';
+    const factory = (loaded as ReferenceServiceModuleLike).createInMemoryReferenceService;
+    const service = factory({
+      assertFileInProject: async (pid, fid) => pid === projectId && fid === pdfFileId,
+    });
     const editor: ReferenceActor = {
       userId: '33333333-3333-4333-8333-333333333333',
       role: 'editor',
@@ -345,6 +415,137 @@ describe('Phase 2.2 Project bibliography database and Reference Manager UI accep
         viewer,
       );
     }
+  });
+
+  it('rejects linking unregistered PDF UUIDs when no explicit assertFileInProject verifier approves them', async () => {
+    const servicePath = join(REPO_ROOT, 'apps/api/src/services/reference-service.ts');
+    const loaded: unknown = await import(pathToFileURL(servicePath).href);
+    expect(hasFunctionProp(loaded, 'createInMemoryReferenceService')).toBe(true);
+    if (!hasFunctionProp(loaded, 'createInMemoryReferenceService')) {
+      return;
+    }
+
+    const service = (loaded as ReferenceServiceModuleLike).createInMemoryReferenceService();
+    const projectId = '11111111-1111-4111-8111-111111111111';
+    const unregisteredPdfId = '88888888-8888-4888-8888-888888888888';
+    const editor: ReferenceActor = {
+      userId: '33333333-3333-4333-8333-333333333333',
+      role: 'editor',
+    };
+
+    const createWithUnregistered = await service.createReference(editor, {
+      projectId,
+      title: 'Reference With Unregistered PDF',
+      localPdfFileId: unregisteredPdfId,
+      sourceProvider: 'manual',
+    });
+    expect(createWithUnregistered.ok).toBe(false);
+    if (!createWithUnregistered.ok) {
+      expect(createWithUnregistered.error.code).toBe('NOT_FOUND');
+    }
+
+    const baseRef = await service.createReference(editor, {
+      projectId,
+      title: 'Reference Without PDF',
+      sourceProvider: 'manual',
+    });
+    expect(baseRef.ok && baseRef.value.status === 'created').toBe(true);
+    if (!baseRef.ok || baseRef.value.status !== 'created') {
+      return;
+    }
+
+    const attachUnregistered = await service.attachPdf(editor, {
+      projectId,
+      referenceId: baseRef.value.reference.id,
+      localPdfFileId: unregisteredPdfId,
+    });
+    expect(attachUnregistered.ok).toBe(false);
+    if (!attachUnregistered.ok) {
+      expect(attachUnregistered.error.code).toBe('NOT_FOUND');
+    }
+  });
+
+  it('isolates uncommitted in-memory batch writes from root reads until commit', async () => {
+    const servicePath = join(REPO_ROOT, 'apps/api/src/services/reference-service.ts');
+    const loaded: unknown = await import(pathToFileURL(servicePath).href);
+    expect(hasFunctionProp(loaded, 'createReferenceService')).toBe(true);
+    expect(hasFunctionProp(loaded, 'createInMemoryReferenceRepository')).toBe(true);
+    if (
+      !hasFunctionProp(loaded, 'createReferenceService') ||
+      !hasFunctionProp(loaded, 'createInMemoryReferenceRepository')
+    ) {
+      return;
+    }
+
+    const mod = loaded as ReferenceServiceModuleLike;
+    const projectId = '11111111-1111-4111-8111-111111111111';
+    const editor: ReferenceActor = {
+      userId: '33333333-3333-4333-8333-333333333333',
+      role: 'editor',
+    };
+
+    const txService = mod.createReferenceService(mod.createInMemoryReferenceRepository());
+    expect(typeof txService.runBatch).toBe('function');
+    if (!txService.runBatch) {
+      return;
+    }
+
+    let rootCountDuringRollback = -1;
+    let txCountDuringRollback = -1;
+    await expect(
+      txService.runBatch(async (scoped) => {
+        await scoped.createReference(editor, {
+          projectId,
+          title: 'Staged Rolled Back Paper',
+          doi: '10.1000/staged-rollback',
+          sourceProvider: 'manual',
+        });
+        const txVisible = await scoped.listReferences(editor, { projectId });
+        const rootVisible = await txService.listReferences(editor, { projectId });
+        txCountDuringRollback = txVisible.ok ? txVisible.value.length : -1;
+        rootCountDuringRollback = rootVisible.ok ? rootVisible.value.length : -1;
+        throw new Error('abort batch');
+      }),
+    ).rejects.toThrow('abort batch');
+
+    expect(txCountDuringRollback).toBe(1);
+    expect(rootCountDuringRollback).toBe(0);
+
+    let rootCountBeforeCommit = -1;
+    await txService.runBatch(async (scoped) => {
+      await scoped.createReference(editor, {
+        projectId,
+        title: 'Staged Committed Paper',
+        doi: '10.1000/staged-commit',
+        sourceProvider: 'manual',
+      });
+      const rootVisible = await txService.listReferences(editor, { projectId });
+      rootCountBeforeCommit = rootVisible.ok ? rootVisible.value.length : -1;
+    });
+
+    expect(rootCountBeforeCommit).toBe(0);
+    const afterCommit = await txService.listReferences(editor, { projectId });
+    expect(afterCommit.ok && afterCommit.value.length === 1).toBe(true);
+  });
+
+  it('omits runBatch when the reference repository lacks runInTransaction', async () => {
+    const servicePath = join(REPO_ROOT, 'apps/api/src/services/reference-service.ts');
+    const loaded: unknown = await import(pathToFileURL(servicePath).href);
+    expect(hasFunctionProp(loaded, 'createReferenceService')).toBe(true);
+    expect(hasFunctionProp(loaded, 'createInMemoryReferenceRepository')).toBe(true);
+    if (
+      !hasFunctionProp(loaded, 'createReferenceService') ||
+      !hasFunctionProp(loaded, 'createInMemoryReferenceRepository')
+    ) {
+      return;
+    }
+
+    const mod = loaded as ReferenceServiceModuleLike;
+    const nonTxService = mod.createReferenceService(createNonTransactionalReferenceRepository());
+    expect(nonTxService.runBatch).toBeUndefined();
+
+    const txService = mod.createReferenceService(mod.createInMemoryReferenceRepository());
+    expect(typeof txService.runBatch).toBe('function');
   });
 
   it('manages Left Sidebar References workspace filtering, selection, and read-only RBAC state', async () => {

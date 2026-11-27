@@ -21,12 +21,92 @@ const REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 interface ProviderAdapterCallContext {
   readonly headers: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
+  readonly signal?: AbortSignal;
+  readonly page?: number;
+  readonly pageSize?: number;
 }
+
+interface ProviderAdapterPageResultLike {
+  readonly candidates: readonly ProviderPaperCandidate[];
+  readonly totalAvailable?: number | null;
+  readonly hasMore?: boolean;
+}
+
+type ProviderAdapterResultLike = readonly ProviderPaperCandidate[] | ProviderAdapterPageResultLike;
 
 type ProviderAdapterFn = (
   query: LiteratureSearchQuery,
   context: ProviderAdapterCallContext,
-) => Promise<readonly ProviderPaperCandidate[]>;
+) => Promise<ProviderAdapterResultLike>;
+
+interface LiteratureServiceModuleLike {
+  readonly createLiteratureSearchService: (deps: {
+    readonly adapters: Readonly<Record<LiteratureProvider, ProviderAdapterFn>>;
+    readonly policy?: Partial<ProviderClientPolicy>;
+  }) => LiteratureSearchServiceLike;
+  readonly createPubMedAdapter: (
+    options: { readonly contactEmail: string },
+    fetchFn: typeof fetch,
+  ) => ProviderAdapterFn;
+}
+
+function buildPaginatedProviderAdapter(
+  provider: LiteratureProvider,
+  totalItems: number,
+): ProviderAdapterFn {
+  return async (_query, ctx) => {
+    const page = ctx.page ?? 1;
+    const pageSize = ctx.pageSize ?? 100;
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = Math.min(totalItems, startIndex + pageSize);
+    const candidates: ProviderPaperCandidate[] = [];
+    for (let idx = startIndex; idx < endIndex; idx += 1) {
+      const itemNumber = idx + 1;
+      candidates.push(
+        makeCandidate(provider, {
+          externalId: `${provider}-${itemNumber}`,
+          title: `${provider} Stable Pagination Paper ${itemNumber}`,
+          doi: `10.1000/${provider}-${itemNumber}`,
+          citationCount: totalItems - idx,
+        }),
+      );
+    }
+    return {
+      candidates,
+      totalAvailable: totalItems,
+      hasMore: endIndex < totalItems,
+    };
+  };
+}
+
+function buildConsortiumPubMedXml(authorCount: number): string {
+  const authorsXml = Array.from(
+    { length: authorCount },
+    (_, idx) =>
+      `<Author><LastName>Author${idx + 1}</LastName><ForeName>Member</ForeName><Initials>M</Initials></Author>`,
+  ).join('');
+  return [
+    '<PubmedArticleSet>',
+    '<PubmedArticle>',
+    '<MedlineCitation>',
+    '<PMID>99000201</PMID>',
+    '<Article>',
+    '<ArticleTitle>Large Consortium Genome Sequencing Study.</ArticleTitle>',
+    `<AuthorList>${authorsXml}</AuthorList>`,
+    '<Journal><Title>Consortium Biology</Title><JournalIssue><PubDate><Year>2025</Year></PubDate></JournalIssue></Journal>',
+    '</Article>',
+    '</MedlineCitation>',
+    '</PubmedArticle>',
+    '</PubmedArticleSet>',
+  ].join('');
+}
+
+function readFetchTargetUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+  return input instanceof URL ? input.href : input.url;
+}
 
 interface LiteratureSearchServiceLike {
   readonly search: (query: LiteratureSearchQuery) => Promise<Result<FederatedSearchResponse>>;
@@ -388,6 +468,117 @@ describe('Phase 2.1 Federated literature search and deduplication acceptance', (
       expect(FederatedSearchResponseSchema.safeParse(body.value).success).toBe(true);
     } finally {
       await app.close();
+    }
+  });
+
+  it('preserves a stable non-repeating result prefix across upstream fetch-round boundaries', async () => {
+    const servicePath = join(REPO_ROOT, 'apps/api/src/services/literature-service.ts');
+    const loaded: unknown = await import(pathToFileURL(servicePath).href);
+    expect(hasFunctionProp(loaded, 'createLiteratureSearchService')).toBe(true);
+    if (!hasFunctionProp(loaded, 'createLiteratureSearchService')) {
+      return;
+    }
+
+    const service = (loaded as LiteratureServiceModuleLike).createLiteratureSearchService({
+      adapters: {
+        openalex: buildPaginatedProviderAdapter('openalex', 300),
+        crossref: buildPaginatedProviderAdapter('crossref', 300),
+        pubmed: async () => ({ candidates: [], totalAvailable: 0, hasMore: false }),
+      },
+      policy: { ...DEFAULT_PROVIDER_CLIENT_POLICY, cacheTtlMs: 60000 },
+    });
+
+    const pageAt100 = await service.search({
+      query: 'stable federated pagination',
+      providers: ['openalex', 'crossref'],
+      limit: 10,
+      offset: 100,
+    });
+    const pageAt200 = await service.search({
+      query: 'stable federated pagination',
+      providers: ['openalex', 'crossref'],
+      limit: 10,
+      offset: 200,
+    });
+
+    expect(pageAt100.ok && pageAt200.ok).toBe(true);
+    if (!pageAt100.ok || !pageAt200.ok) {
+      return;
+    }
+    expect(pageAt100.value.results).toHaveLength(10);
+    expect(pageAt200.value.results).toHaveLength(10);
+
+    const keysAt100 = new Set(pageAt100.value.results.map((paper) => paper.dedupeKey));
+    const repeatedAt200 = pageAt200.value.results.filter((paper) => keysAt100.has(paper.dedupeKey));
+    expect(repeatedAt200).toEqual([]);
+  });
+
+  it('handles PubMed records exceeding 200 authors without failing FederatedSearchResponseSchema or healthy providers', async () => {
+    const servicePath = join(REPO_ROOT, 'apps/api/src/services/literature-service.ts');
+    const loaded: unknown = await import(pathToFileURL(servicePath).href);
+    expect(hasFunctionProp(loaded, 'createLiteratureSearchService')).toBe(true);
+    expect(hasFunctionProp(loaded, 'createPubMedAdapter')).toBe(true);
+    if (
+      !hasFunctionProp(loaded, 'createLiteratureSearchService') ||
+      !hasFunctionProp(loaded, 'createPubMedAdapter')
+    ) {
+      return;
+    }
+
+    const mod = loaded as LiteratureServiceModuleLike;
+    const consortiumXml = buildConsortiumPubMedXml(201);
+    const pubmedFetch: typeof fetch = async (input) => {
+      const url = readFetchTargetUrl(input);
+      if (url.includes('esearch.fcgi')) {
+        return new Response(
+          JSON.stringify({ esearchresult: { count: '1', idlist: ['99000201'] } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(consortiumXml, {
+        status: 200,
+        headers: { 'Content-Type': 'application/xml' },
+      });
+    };
+
+    const service = mod.createLiteratureSearchService({
+      adapters: {
+        openalex: async () => [
+          makeCandidate('openalex', {
+            externalId: 'W-HEALTHY-1',
+            title: 'Healthy OpenAlex Companion Paper',
+            doi: '10.1000/healthy-openalex-1',
+          }),
+        ],
+        crossref: async () => [],
+        pubmed: mod.createPubMedAdapter(
+          { contactEmail: DEFAULT_PROVIDER_CLIENT_POLICY.contactEmail },
+          pubmedFetch,
+        ),
+      },
+      policy: { ...DEFAULT_PROVIDER_CLIENT_POLICY, maxRetries: 0 },
+    });
+
+    const response = await service.search({
+      query: 'consortium genome sequencing',
+      providers: ['openalex', 'pubmed'],
+    });
+    expect(response.ok).toBe(true);
+    if (!response.ok) {
+      return;
+    }
+    expect(FederatedSearchResponseSchema.safeParse(response.value).success).toBe(true);
+    expect(
+      response.value.results.some((paper) => paper.externalIds['openalex'] === 'W-HEALTHY-1'),
+    ).toBe(true);
+    const pubmedPaper = response.value.results.find(
+      (paper) => paper.externalIds['pubmed'] === '99000201',
+    );
+    if (pubmedPaper !== undefined) {
+      expect(pubmedPaper.authors.length).toBeLessThanOrEqual(200);
+      expect(pubmedPaper.authors.length).toBeGreaterThan(0);
+    } else {
+      expect(response.value.warnings.some((warning) => warning.provider === 'pubmed')).toBe(true);
     }
   });
 });

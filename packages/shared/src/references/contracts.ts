@@ -242,54 +242,79 @@ function stripDoiPrefix(value: string): string {
 }
 
 const TRAILING_PUNCTUATION = new Set(['.', ',', ';']);
-const CLOSING_TO_OPENING: Readonly<Record<string, string>> = {
-  ')': '(',
-  ']': '[',
-  '}': '{',
-};
+const MAX_CANONICAL_DOI_LENGTH = 256;
 
-function hasUnmatchedClosingDelimiter(value: string, openChar: string, closeChar: string): boolean {
-  let balance = 0;
-  for (const ch of value) {
-    if (ch === openChar) {
-      balance += 1;
-    } else if (ch === closeChar) {
-      balance -= 1;
-    }
-  }
-  return balance < 0;
+interface DelimiterBalances {
+  paren: number;
+  bracket: number;
+  brace: number;
 }
 
-function trimOneTrailingDelimiter(value: string): string {
-  const last = value.at(-1);
-  if (last === undefined) {
-    return value;
+function updateDelimiterBalance(balances: DelimiterBalances, ch: string, delta: number): void {
+  if (ch === '(') {
+    balances.paren += delta;
+  } else if (ch === ')') {
+    balances.paren -= delta;
+  } else if (ch === '[') {
+    balances.bracket += delta;
+  } else if (ch === ']') {
+    balances.bracket -= delta;
+  } else if (ch === '{') {
+    balances.brace += delta;
+  } else if (ch === '}') {
+    balances.brace -= delta;
   }
-  if (TRAILING_PUNCTUATION.has(last)) {
-    return value.slice(0, -1);
+}
+
+function countDelimiterBalances(value: string): DelimiterBalances {
+  const balances: DelimiterBalances = { paren: 0, bracket: 0, brace: 0 };
+  for (let index = 0; index < value.length; index += 1) {
+    const ch = value[index];
+    if (ch !== undefined) {
+      updateDelimiterBalance(balances, ch, 1);
+    }
   }
-  const openChar = CLOSING_TO_OPENING[last];
-  if (openChar !== undefined && hasUnmatchedClosingDelimiter(value, openChar, last)) {
-    return value.slice(0, -1);
+  return balances;
+}
+
+function hasExcessClosingDelimiter(balances: DelimiterBalances, ch: string): boolean {
+  if (ch === ')') {
+    return balances.paren < 0;
   }
-  return value;
+  if (ch === ']') {
+    return balances.bracket < 0;
+  }
+  if (ch === '}') {
+    return balances.brace < 0;
+  }
+  return false;
 }
 
 function stripTrailingDoiPunctuation(value: string): string {
-  let current = value;
-  while (current.length > 0) {
-    const next = trimOneTrailingDelimiter(current);
-    if (next === current) {
-      return current;
+  const balances = countDelimiterBalances(value);
+  let end = value.length;
+  while (end > 0) {
+    const last = value[end - 1];
+    if (last === undefined) {
+      break;
     }
-    current = next;
+    if (TRAILING_PUNCTUATION.has(last)) {
+      end -= 1;
+      continue;
+    }
+    if (hasExcessClosingDelimiter(balances, last)) {
+      updateDelimiterBalance(balances, last, -1);
+      end -= 1;
+      continue;
+    }
+    break;
   }
-  return current;
+  return value.slice(0, end);
 }
 
 export function normalizeDoi(raw: string): string | null {
   const cleaned = stripTrailingDoiPunctuation(stripDoiPrefix(raw.trim())).toLowerCase();
-  if (!CANONICAL_DOI_REGEX.test(cleaned)) {
+  if (cleaned.length > MAX_CANONICAL_DOI_LENGTH || !CANONICAL_DOI_REGEX.test(cleaned)) {
     return null;
   }
   return cleaned;
