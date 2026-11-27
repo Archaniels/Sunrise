@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   ExportBibliographyInputSchema,
   ImportBibliographyInputSchema,
@@ -62,10 +61,6 @@ function readObjectBody(body: unknown): object {
   return typeof body === 'object' && body !== null ? body : {};
 }
 
-function sha256Digest(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
 async function ensureIngestionFileOwned(
   reply: FastifyReply,
   guards: IngestionRouteGuardOptions | undefined,
@@ -82,42 +77,6 @@ async function ensureIngestionFileOwned(
     return false;
   }
   return true;
-}
-
-async function verifyInlinePdfMatchesStoredFile(
-  reply: FastifyReply,
-  guards: IngestionRouteGuardOptions | undefined,
-  projectId: string,
-  fileId: string,
-  pdfBase64: string | undefined,
-): Promise<boolean> {
-  if (pdfBase64 === undefined || !guards?.readFileBytes) {
-    return true;
-  }
-  try {
-    const storedBytes = await guards.readFileBytes(projectId, fileId);
-    if (storedBytes === null) {
-      sendErrorReply(reply, 'NOT_FOUND', 'File not found in project');
-      return false;
-    }
-    const inlineBytes = Uint8Array.from(Buffer.from(pdfBase64, 'base64'));
-    if (sha256Digest(storedBytes) !== sha256Digest(inlineBytes)) {
-      sendErrorReply(
-        reply,
-        'VALIDATION_ERROR',
-        'Provided PDF bytes do not match stored project file',
-      );
-      return false;
-    }
-    return true;
-  } catch {
-    sendErrorReply(
-      reply,
-      'DEPENDENCY_UNAVAILABLE',
-      'Failed to verify PDF bytes against object storage',
-    );
-    return false;
-  }
 }
 
 export function registerIngestionRoutes(
@@ -253,17 +212,12 @@ export function registerIngestionRoutes(
       if (!(await ensureIngestionFileOwned(reply, guards, projectId, parsed.data.localPdfFileId))) {
         return reply;
       }
-      const bytesMatch = await verifyInlinePdfMatchesStoredFile(
-        reply,
-        guards,
-        projectId,
-        parsed.data.localPdfFileId,
-        parsed.data.pdfBase64,
-      );
-      if (!bytesMatch) {
-        return reply;
-      }
-      const result = await ingestionService.ingestPdf(actor, parsed.data);
+      const result = await ingestionService.ingestPdf(actor, parsed.data, {
+        ...(guards?.readFileBytes !== undefined
+          ? { readStoredPdfBytes: guards.readFileBytes }
+          : {}),
+        requireStoredVerification: true,
+      });
       if (!result.ok) {
         return sendErrorReply(reply, result.error.code, result.error.message);
       }

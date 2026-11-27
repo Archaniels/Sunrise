@@ -431,7 +431,11 @@ describe('PR #1 CodeRabbit fixes — Ingestion & Controllers (#8-#15)', () => {
 
   it('rejects unverified cited body-text DOIs and emits unverifiedCandidateDois (#12)', async () => {
     const citedDoi = '10.1000/cited-related-work';
+    const referenceService = createInMemoryReferenceService({
+      assertFileInProject: async (pid, fid) => pid === PROJECT_A && fid === FILE_A,
+    });
     const service = createIngestionService({
+      referenceService,
       hydrateByDoi: async (doi) => ({
         provider: 'crossref',
         candidate: makeCandidate({
@@ -487,7 +491,11 @@ describe('PR #1 CodeRabbit fixes — Ingestion & Controllers (#8-#15)', () => {
     const headers = { authorization: `Bearer ${signup.value.tokens.accessToken}` };
 
     const appNoGuards = createBareFastifyServer();
+    const guardReferenceService = createInMemoryReferenceService({
+      assertFileInProject: async (pid, fid) => pid === createdProj.value.id && fid === FILE_A,
+    });
     const ingestionService = createIngestionService({
+      referenceService: guardReferenceService,
       hydrateByDoi: async () => null,
       extractPdfContent: async () => ({
         text: 'Large PDF',
@@ -504,17 +512,25 @@ describe('PR #1 CodeRabbit fixes — Ingestion & Controllers (#8-#15)', () => {
       payload: {
         localPdfFileId: FILE_A,
         fileName: 'paper.pdf',
-        pdfBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+        pdfBase64: Buffer.from('%PDF-1.7', 'utf8').toString('base64'),
       },
     });
     expect(noGuardRes.statusCode).toBe(404);
     await appNoGuards.close();
 
     const appLargeLimit = createBareFastifyServer();
+    const overOneMiBBytes = Buffer.concat([
+      Buffer.from('%PDF-1.7\n', 'utf8'),
+      Buffer.alloc(900_000, 65),
+    ]);
+    const overOneMiBBase64 = overOneMiBBytes.toString('base64');
+    const readFileBytesSpy = vi.fn(async (pid: string, fid: string) =>
+      pid === createdProj.value.id && fid === FILE_A ? new Uint8Array(overOneMiBBytes) : null,
+    );
     registerIngestionRoutes(appLargeLimit, authService, projectService, ingestionService, {
       assertFileInProject: async () => true,
+      readFileBytes: readFileBytesSpy,
     });
-    const overOneMiBBase64 = Buffer.alloc(900_000, 65).toString('base64');
     const largeRes = await appLargeLimit.inject({
       method: 'POST',
       url: `/projects/${createdProj.value.id}/ingestion/pdf`,
@@ -526,6 +542,7 @@ describe('PR #1 CodeRabbit fixes — Ingestion & Controllers (#8-#15)', () => {
       },
     });
     expect(largeRes.statusCode).toBe(201);
+    expect(readFileBytesSpy).toHaveBeenCalledTimes(1);
     await appLargeLimit.close();
   });
 });
@@ -549,8 +566,8 @@ describe('PR #1 CodeRabbit fixes — Ownership, References & Annotations (#16-#2
       projectId: PROJECT_A,
       parentId: null,
       fileName: 'paper.pdf',
-      sizeBytes: 4,
-      contentBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+      sizeBytes: 8,
+      contentBase64: Buffer.from('%PDF-1.7', 'utf8').toString('base64'),
     });
     expect(folder.ok && textFile.ok && pdfFile.ok).toBe(true);
     if (!folder.ok || !textFile.ok || !pdfFile.ok) {

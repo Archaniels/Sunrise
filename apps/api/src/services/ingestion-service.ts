@@ -84,6 +84,11 @@ export interface IngestionServiceDeps {
   readonly byokFallback?: ByokPdfFallbackExtractor;
 }
 
+export interface IngestPdfOptions {
+  readonly readStoredPdfBytes?: (projectId: string, fileId: string) => Promise<Uint8Array | null>;
+  readonly requireStoredVerification?: boolean;
+}
+
 export interface IngestionService {
   readonly ingestDoi: (
     actor: IngestionActor,
@@ -100,6 +105,7 @@ export interface IngestionService {
   readonly ingestPdf: (
     actor: IngestionActor,
     input: IngestPdfInput,
+    options?: IngestPdfOptions,
   ) => Promise<Result<IngestPdfResponse>>;
 }
 
@@ -109,11 +115,14 @@ type DoiLookupOutcome =
   | { readonly kind: 'unavailable'; readonly reason: string };
 
 const RIS_TAG_LINE_PATTERN = /^[A-Z0-9]{2} {2}- /;
-const RIS_START_TAG_PATTERN = /^TY {2}- /m;
-const BIBTEX_ENTRY_PATTERN = /@[a-zA-Z]+\s*[{(]/;
+const RIS_START_TAG_PATTERN = /^TY {2}- /;
+const RIS_END_TAG_PATTERN = /^ER {2}-(?:\s|$)/;
+const BIBTEX_RECORD_LINE_PATTERN = /^\s*@[a-zA-Z]+\s*[{(]/;
 const BODY_DOI_TITLE_MATCH_THRESHOLD = 0.5;
 const BODY_DOI_AUTHOR_TITLE_FLOOR = 0.35;
 const MAX_BODY_DOIS_TO_VERIFY = 5;
+const MAX_ENTRY_ERROR_CITE_KEY_LENGTH = 128;
+const MAX_ENTRY_ERROR_MESSAGE_LENGTH = 500;
 
 const XMP_PARSER = new XMLParser({
   ignoreAttributes: false,
@@ -158,14 +167,41 @@ export function unfoldRisDoiLines(risText: string): string {
   return output.join('\n');
 }
 
+function detectBibliographyStructure(content: string): {
+  readonly hasRisRecord: boolean;
+  readonly hasBibtexRecord: boolean;
+} {
+  const lines = content.replace(/^\uFEFF/, '').split(/\r?\n/);
+  let hasRisRecord = false;
+  let hasBibtexRecord = false;
+  let inRisRecord = false;
+
+  for (const line of lines) {
+    if (RIS_START_TAG_PATTERN.test(line)) {
+      hasRisRecord = true;
+      inRisRecord = true;
+      continue;
+    }
+    if (inRisRecord) {
+      if (RIS_END_TAG_PATTERN.test(line)) {
+        inRisRecord = false;
+      }
+      continue;
+    }
+    if (BIBTEX_RECORD_LINE_PATTERN.test(line)) {
+      hasBibtexRecord = true;
+    }
+  }
+  return { hasRisRecord, hasBibtexRecord };
+}
+
 function validateBibliographyContentFormat(
   content: string,
   format: 'bibtex' | 'ris',
 ): Result<string> {
-  const hasRisStart = RIS_START_TAG_PATTERN.test(content);
-  const hasBibtexStart = BIBTEX_ENTRY_PATTERN.test(content);
+  const { hasRisRecord, hasBibtexRecord } = detectBibliographyStructure(content);
   if (format === 'bibtex') {
-    if (!hasBibtexStart || hasRisStart) {
+    if (!hasBibtexRecord || hasRisRecord) {
       return err({
         code: 'VALIDATION_ERROR',
         message: 'Bibliography content does not match declared bibtex format',
@@ -173,7 +209,7 @@ function validateBibliographyContentFormat(
     }
     return ok(content);
   }
-  if (!hasRisStart || hasBibtexStart) {
+  if (!hasRisRecord || hasBibtexRecord) {
     return err({
       code: 'VALIDATION_ERROR',
       message: 'Bibliography content does not match declared ris format',
@@ -330,7 +366,14 @@ function parseBibliographyEntries(content: string, format: 'bibtex' | 'ris'): Re
     return validated;
   }
   try {
-    const cite = new Cite(validated.value);
+    const forceType = format === 'ris' ? '@ris/file' : '@bibtex/text';
+    const cite = new Cite(validated.value, {
+      forceType,
+      maxChainLength: 10,
+      generateGraph: false,
+      strict: true,
+      target: '@csl/list+object',
+    });
     const rawData: unknown = cite.data;
     const data = Array.isArray(rawData) ? rawData.filter(isCslObject) : [];
     if (data.length === 0) {
@@ -459,27 +502,34 @@ function candidateSharesXmpAuthor(
   });
 }
 
+function computeBestHeadingTitleScore(text: string, candidateTitle: string): number {
+  const headings = extractLeadingHeadingCandidates(text);
+  let bestScore = 0;
+  for (const heading of headings) {
+    const score = computeTitleSimilarity(heading, candidateTitle);
+    if (score > bestScore) {
+      bestScore = score;
+    }
+  }
+  return bestScore;
+}
+
 function doesHydratedCandidateMatchPdf(
   candidate: ProviderPaperCandidate,
   extracted: ExtractedPdfContent,
 ): boolean {
   const xmpTitle = extracted.xmpTitle?.trim() ?? '';
   const xmpTitleScore = xmpTitle.length > 0 ? computeTitleSimilarity(xmpTitle, candidate.title) : 0;
-  if (xmpTitleScore >= BODY_DOI_TITLE_MATCH_THRESHOLD) {
-    return true;
-  }
-  const headings = extractLeadingHeadingCandidates(extracted.text);
-  const headingMatch = headings.some(
-    (heading) => computeTitleSimilarity(heading, candidate.title) >= BODY_DOI_TITLE_MATCH_THRESHOLD,
-  );
-  if (headingMatch) {
+  const headingTitleScore = computeBestHeadingTitleScore(extracted.text, candidate.title);
+  const bestTitleScore = Math.max(xmpTitleScore, headingTitleScore);
+  if (bestTitleScore >= BODY_DOI_TITLE_MATCH_THRESHOLD) {
     return true;
   }
   const xmpFamilies = extractNormalizedXmpAuthorFamilies(extracted.xmpAuthors);
   if (!candidateSharesXmpAuthor(candidate, xmpFamilies)) {
     return false;
   }
-  return xmpTitle.length === 0 || xmpTitleScore >= BODY_DOI_AUTHOR_TITLE_FLOOR;
+  return bestTitleScore >= BODY_DOI_AUTHOR_TITLE_FLOOR;
 }
 
 function buildHeuristicPdfMetadata(
@@ -522,29 +572,37 @@ async function loadStoredPdfBytes(
   }
 }
 
+function verifyInlinePdfBytes(storedBytes: Uint8Array, pdfBase64: string): Result<Uint8Array> {
+  const inlineBytes = Uint8Array.from(Buffer.from(pdfBase64, 'base64'));
+  if (sha256Hex(storedBytes) !== sha256Hex(inlineBytes)) {
+    return err({
+      code: 'VALIDATION_ERROR',
+      message: 'Provided PDF bytes do not match stored project file',
+    });
+  }
+  return ok(storedBytes);
+}
+
 async function resolvePdfBytes(
   deps: IngestionServiceDeps,
   parsed: ReturnType<typeof IngestPdfInputSchema.parse>,
+  options?: IngestPdfOptions,
 ): Promise<Result<Uint8Array>> {
-  if (deps.fetchPdfBytes !== undefined) {
-    const storedResult = await loadStoredPdfBytes(
-      deps.fetchPdfBytes,
-      parsed.projectId,
-      parsed.localPdfFileId,
-    );
+  const reader = options?.readStoredPdfBytes ?? deps.fetchPdfBytes;
+  if (reader !== undefined) {
+    const storedResult = await loadStoredPdfBytes(reader, parsed.projectId, parsed.localPdfFileId);
     if (!storedResult.ok) {
       return storedResult;
     }
-    if (parsed.pdfBase64 !== undefined) {
-      const inlineBytes = Uint8Array.from(Buffer.from(parsed.pdfBase64, 'base64'));
-      if (sha256Hex(storedResult.value) !== sha256Hex(inlineBytes)) {
-        return err({
-          code: 'VALIDATION_ERROR',
-          message: 'Provided PDF bytes do not match stored project file',
-        });
-      }
-    }
-    return storedResult;
+    return parsed.pdfBase64 !== undefined
+      ? verifyInlinePdfBytes(storedResult.value, parsed.pdfBase64)
+      : storedResult;
+  }
+  if (options?.requireStoredVerification) {
+    return err({
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: 'Storage-backed PDF verification is required for linked PDF ingestion',
+    });
   }
   if (parsed.pdfBase64 !== undefined) {
     return ok(Uint8Array.from(Buffer.from(parsed.pdfBase64, 'base64')));
@@ -798,7 +856,7 @@ async function resolveVerifiedPdfDoi(
   for (const candidateDoi of candidatesToCheck) {
     const hydratedResult = await safeHydrateByDoi(deps.hydrateByDoi, candidateDoi);
     if (!hydratedResult.ok) {
-      return hydratedResult;
+      continue;
     }
     if (
       hydratedResult.value !== null &&
@@ -827,6 +885,18 @@ interface BibliographyImportBuckets {
   readonly errors: ImportBibliographyEntryError[];
 }
 
+function readBoundedRawCiteKey(entry: CSL): string | null {
+  const raw = readCslOptionalString(entry['citation-key']);
+  return raw !== null ? raw.slice(0, MAX_ENTRY_ERROR_CITE_KEY_LENGTH) : null;
+}
+
+function readBoundedErrorMessage(message: string): string {
+  const trimmed = message.trim();
+  return trimmed.length > 0
+    ? trimmed.slice(0, MAX_ENTRY_ERROR_MESSAGE_LENGTH)
+    : 'Failed to import bibliography entry';
+}
+
 async function processSingleBibliographyEntry(
   actor: IngestionActor,
   referenceService: ReferenceService,
@@ -839,7 +909,7 @@ async function processSingleBibliographyEntry(
   if (mapped === null) {
     buckets.errors.push({
       entryIndex: index,
-      rawCiteKey: readCslOptionalString(entry['citation-key']),
+      rawCiteKey: readBoundedRawCiteKey(entry),
       message: 'Bibliography entry is missing a valid title',
     });
     return;
@@ -848,8 +918,8 @@ async function processSingleBibliographyEntry(
   if (!created.ok) {
     buckets.errors.push({
       entryIndex: index,
-      rawCiteKey: mapped.citeKey ?? null,
-      message: created.error.message,
+      rawCiteKey: mapped.citeKey?.slice(0, MAX_ENTRY_ERROR_CITE_KEY_LENGTH) ?? null,
+      message: readBoundedErrorMessage(created.error.message),
     });
     return;
   }
@@ -893,7 +963,7 @@ async function runBibliographyEntryLoop(
           : 'Unexpected persistence error while importing entry';
       buckets.errors.push({
         entryIndex: index,
-        rawCiteKey: readCslOptionalString(entry['citation-key']),
+        rawCiteKey: readBoundedRawCiteKey(entry),
         message,
       });
     }
@@ -983,31 +1053,43 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
       if (!entriesResult.ok) {
         return entriesResult;
       }
-      try {
-        const buckets = referenceService.runBatch
-          ? await referenceService.runBatch((txService) =>
-              runBibliographyEntryLoop(actor, txService, entriesResult.value, parsed.data, false),
-            )
-          : await runBibliographyEntryLoop(
+      if (referenceService.runBatch) {
+        try {
+          const response = await referenceService.runBatch(async (txService) => {
+            const buckets = await runBibliographyEntryLoop(
               actor,
-              referenceService,
+              txService,
               entriesResult.value,
               parsed.data,
-              true,
+              false,
             );
-        return ok(
-          ImportBibliographyResponseSchema.parse({
-            format: parsed.data.format,
-            ...buckets,
-          }),
-        );
-      } catch {
-        return err({
-          code: 'DEPENDENCY_UNAVAILABLE',
-          message:
-            'Bibliography import transaction failed and was rolled back; safe to retry batch',
-        });
+            return ImportBibliographyResponseSchema.parse({
+              format: parsed.data.format,
+              ...buckets,
+            });
+          });
+          return ok(response);
+        } catch {
+          return err({
+            code: 'DEPENDENCY_UNAVAILABLE',
+            message:
+              'Bibliography import transaction failed and was rolled back; safe to retry batch',
+          });
+        }
       }
+      const buckets = await runBibliographyEntryLoop(
+        actor,
+        referenceService,
+        entriesResult.value,
+        parsed.data,
+        true,
+      );
+      return ok(
+        ImportBibliographyResponseSchema.parse({
+          format: parsed.data.format,
+          ...buckets,
+        }),
+      );
     },
 
     exportBibliography: async (actor, input): Promise<Result<ExportBibliographyResponse>> => {
@@ -1057,7 +1139,7 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
       );
     },
 
-    ingestPdf: async (actor, input): Promise<Result<IngestPdfResponse>> => {
+    ingestPdf: async (actor, input, options): Promise<Result<IngestPdfResponse>> => {
       if (!canRoleMutateReferences(actor.role)) {
         return err({ code: 'FORBIDDEN', message: 'Insufficient role to ingest PDF references' });
       }
@@ -1068,7 +1150,7 @@ export function createIngestionService(deps: IngestionServiceDeps): IngestionSer
           message: parsed.error.issues[0]?.message ?? 'Invalid PDF ingestion payload',
         });
       }
-      const bytesResult = await resolvePdfBytes(deps, parsed.data);
+      const bytesResult = await resolvePdfBytes(deps, parsed.data, options);
       if (!bytesResult.ok) {
         return bytesResult;
       }

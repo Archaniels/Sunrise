@@ -178,3 +178,63 @@ export function bindDeepLinkSubscription(
     onUpdate?.(nextState, target);
   });
 }
+
+export interface TextLayerContainerLike {
+  innerHTML?: string;
+  readonly style?: unknown;
+}
+
+export function clearTextLayerElement(container: TextLayerContainerLike | null): void {
+  if (!container) {
+    return;
+  }
+  Reflect.set(container, 'innerHTML', '');
+  const styleObj: unknown = Reflect.get(container, 'style');
+  if (typeof styleObj === 'object' && styleObj !== null) {
+    Reflect.set(styleObj, 'pointerEvents', 'none');
+  }
+}
+
+export function resetTextLayerElement(
+  container: TextLayerContainerLike,
+  width: number,
+  height: number,
+  scale: number,
+): void {
+  Reflect.set(container, 'innerHTML', '');
+  const styleObj: unknown = Reflect.get(container, 'style');
+  if (typeof styleObj === 'object' && styleObj !== null) {
+    Reflect.set(styleObj, 'pointerEvents', '');
+    Reflect.set(styleObj, 'width', `${Math.floor(width)}px`);
+    Reflect.set(styleObj, 'height', `${Math.floor(height)}px`);
+    const setProperty = Reflect.get(styleObj, 'setProperty');
+    if (typeof setProperty === 'function') {
+      setProperty.call(styleObj, '--scale-factor', String(scale));
+    }
+  }
+}
+
+export function isSelectionForCurrentPane(
+  selection: PdfSelectionContext,
+  state: Pick<PdfViewerState, 'projectId' | 'fileId' | 'currentPage'>,
+): boolean {
+  return (
+    selection.projectId === state.projectId &&
+    selection.fileId === state.fileId &&
+    selection.pageNumber === state.currentPage
+  );
+}
+
+export function resolveEffectiveSelection(
+  activeSelection: PdfSelectionContext | null,
+  localSelection: PdfSelectionContext | null,
+  state: Pick<PdfViewerState, 'projectId' | 'fileId' | 'currentPage'>,
+): PdfSelectionContext | null {
+  if (activeSelection !== null) {
+    return activeSelection;
+  }
+  if (localSelection !== null && isSelectionForCurrentPane(localSelection, state)) {
+    return localSelection;
+  }
+  return null;
+}

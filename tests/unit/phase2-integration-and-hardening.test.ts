@@ -193,7 +193,10 @@ function createMockAuthPgClient(sqlLog: string[]): TransactionClient {
 function buildPhase2TestServer() {
   const authService = createInMemoryAuthService();
   const fileExplorerService = createInMemoryFileExplorerService();
-  const referenceService = createInMemoryReferenceService();
+  const referenceService = createInMemoryReferenceService({
+    assertFileInProject: (projectId, fileId) =>
+      fileExplorerService.hasPdfFileInProject(projectId, fileId),
+  });
   const pdfAnnotationService = createInMemoryPdfAnnotationService();
   const literatureService = createLiteratureSearchService({
     adapters: {
@@ -428,8 +431,8 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
         payload: {
           parentId: null,
           fileName: 'a.pdf',
-          sizeBytes: 4,
-          contentBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+          sizeBytes: 8,
+          contentBase64: Buffer.from('%PDF-1.7', 'utf8').toString('base64'),
         },
       })
     ).json().value.id;
@@ -441,8 +444,8 @@ describe('Phase 2 integration and bundled Phase 1 hardening carry-forwards', () 
         payload: {
           parentId: null,
           fileName: 'b.pdf',
-          sizeBytes: 4,
-          contentBase64: Buffer.from('%PDF', 'utf8').toString('base64'),
+          sizeBytes: 8,
+          contentBase64: Buffer.from('%PDF-1.7', 'utf8').toString('base64'),
         },
       })
     ).json().value.id;

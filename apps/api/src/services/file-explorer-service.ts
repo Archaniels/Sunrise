@@ -97,6 +97,20 @@ export interface FileExplorerService {
   readonly readFileBytes: (projectId: string, fileId: string) => Promise<Uint8Array | null>;
 }
 
+const PDF_MAGIC_SIGNATURE = Buffer.from('%PDF-', 'ascii');
+
+function hasPdfMagicSignature(bytes: Buffer | Uint8Array): boolean {
+  if (bytes.length < PDF_MAGIC_SIGNATURE.length) {
+    return false;
+  }
+  for (let index = 0; index < PDF_MAGIC_SIGNATURE.length; index += 1) {
+    if (bytes[index] !== PDF_MAGIC_SIGNATURE[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const TEXT_PREVIEW_KINDS: ReadonlySet<FileKind> = new Set([
   'text',
   'markdown',
@@ -924,11 +938,8 @@ export function createFileExplorerService(
       if (node.isFolder || node.s3Key === null) {
         return false;
       }
-      return (
-        node.kind === 'pdf' ||
-        node.mimeType.toLowerCase() === 'application/pdf' ||
-        node.name.toLowerCase().endsWith('.pdf')
-      );
+      const bytes = await storage.getObject(node.s3Key);
+      return bytes !== null && hasPdfMagicSignature(bytes);
     },
 
     readFileBytes: async (projectId, fileId): Promise<Uint8Array | null> => {

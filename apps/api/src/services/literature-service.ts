@@ -99,6 +99,9 @@ const MAX_JOURNAL_LENGTH = 500;
 const MAX_ABSTRACT_LENGTH = 20000;
 const MAX_SHORT_FIELD_LENGTH = 64;
 const MAX_EXTERNAL_ID_LENGTH = 256;
+const MAX_CANDIDATE_AUTHORS = 200;
+const MAX_AUTHOR_PART_LENGTH = 160;
+const MAX_AUTHOR_DISPLAY_LENGTH = 320;
 
 const PROVIDER_ERROR_META_KEY = Symbol('providerErrorMeta');
 
@@ -451,15 +454,58 @@ function applyAttemptToState(
   }
 }
 
+function computeMaxCandidateCount(states: readonly ProviderPaginationState[]): number {
+  let maxLength = 0;
+  for (const state of states) {
+    if (state.candidates.length > maxLength) {
+      maxLength = state.candidates.length;
+    }
+  }
+  return maxLength;
+}
+
+function computeStableCandidateDepth(states: readonly ProviderPaginationState[]): number {
+  const maxLength = computeMaxCandidateCount(states);
+  let stableDepth = maxLength;
+  for (const state of states) {
+    if (state.hasMore && state.candidates.length < stableDepth) {
+      stableDepth = state.candidates.length;
+    }
+  }
+  return stableDepth;
+}
+
+function appendCandidatesAtDepth(
+  states: readonly ProviderPaginationState[],
+  itemIndex: number,
+  target: ProviderPaperCandidate[],
+): void {
+  for (const state of states) {
+    const candidate = state.candidates[itemIndex];
+    if (candidate !== undefined) {
+      target.push(candidate);
+    }
+  }
+}
+
+function interleaveProviderCandidates(
+  states: readonly ProviderPaginationState[],
+  depthLimit?: number,
+): ProviderPaperCandidate[] {
+  const limit = depthLimit ?? computeMaxCandidateCount(states);
+  const interleaved: ProviderPaperCandidate[] = [];
+  for (let itemIndex = 0; itemIndex < limit; itemIndex += 1) {
+    appendCandidatesAtDepth(states, itemIndex, interleaved);
+  }
+  return interleaved;
+}
+
 function collectFilteredResults(
   states: readonly ProviderPaginationState[],
   filters: LiteratureSearchQuery['filters'],
+  depthLimit?: number,
 ): FederatedPaperResult[] {
-  const allCandidates: ProviderPaperCandidate[] = [];
-  for (const state of states) {
-    allCandidates.push(...state.candidates);
-  }
-  const deduplicated = deduplicatePaperCandidates(allCandidates);
+  const deduplicated = deduplicatePaperCandidates(interleaveProviderCandidates(states, depthLimit));
   return filters
     ? deduplicated.filter((paper) => matchesLiteratureFilters(paper, filters))
     : deduplicated;
@@ -591,7 +637,12 @@ async function fetchPaginatedProviders(
       }
     }
     filtered = collectFilteredResults(states, parsedData.filters);
-    if (filtered.length >= targetCount) {
+    const stableDepth = computeStableCandidateDepth(states);
+    const stableFiltered =
+      stableDepth < computeMaxCandidateCount(states)
+        ? collectFilteredResults(states, parsedData.filters, stableDepth)
+        : filtered;
+    if (stableFiltered.length >= targetCount) {
       break;
     }
   }
@@ -782,15 +833,24 @@ function parsePubMedOrderedAuthors(articleBody: readonly OrderedXmlNode[]): Refe
   const authorNodes = findOrderedChildren(authorListBody, 'Author');
   const authors: ReferenceAuthor[] = [];
   for (const authorNode of authorNodes) {
+    if (authors.length >= MAX_CANDIDATE_AUTHORS) {
+      break;
+    }
     const body = asOrderedNodes(authorNode['Author']);
-    const family = readOrderedText(getOrderedTagBody(body, 'LastName'));
+    const family = clampString(
+      readOrderedText(getOrderedTagBody(body, 'LastName')),
+      MAX_AUTHOR_PART_LENGTH,
+    );
     const foreName = readOrderedText(getOrderedTagBody(body, 'ForeName'));
     const initials = readOrderedText(getOrderedTagBody(body, 'Initials'));
-    const given = foreName.length > 0 ? foreName : initials;
+    const given = clampString(foreName.length > 0 ? foreName : initials, MAX_AUTHOR_PART_LENGTH);
     if (family.length === 0) {
       continue;
     }
-    const displayName = given.length > 0 ? `${given} ${family}` : family;
+    const displayName = clampString(
+      given.length > 0 ? `${given} ${family}` : family,
+      MAX_AUTHOR_DISPLAY_LENGTH,
+    );
     authors.push({ family, given, displayName, orcid: null });
   }
   return authors;
@@ -992,7 +1052,8 @@ export function parseOpenAlexWork(work: unknown): ProviderPaperCandidate | null 
   const biblio = parseOpenAlexBiblio(asRecord(rec['biblio']));
   const authors = asArray(rec['authorships'])
     .map(parseOpenAlexAuthor)
-    .filter((author): author is ReferenceAuthor => author !== null);
+    .filter((author): author is ReferenceAuthor => author !== null)
+    .slice(0, MAX_CANDIDATE_AUTHORS);
   const topics = asArray(rec['concepts'])
     .map((item) => clampString(readTextValue(asRecord(item)?.['display_name']), 120))
     .filter((topic) => topic.length > 0)
@@ -1057,7 +1118,8 @@ export function parseCrossrefWork(item: unknown): ProviderPaperCandidate | null 
   }
   const authors = asArray(rec['author'])
     .map(parseCrossrefAuthor)
-    .filter((author): author is ReferenceAuthor => author !== null);
+    .filter((author): author is ReferenceAuthor => author !== null)
+    .slice(0, MAX_CANDIDATE_AUTHORS);
   const rawAbstract = readTextValue(rec['abstract']).replace(/<[^>]+>/g, ' ');
   const year = parseCrossrefYear(rec);
 

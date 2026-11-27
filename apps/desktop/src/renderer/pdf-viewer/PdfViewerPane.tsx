@@ -21,6 +21,11 @@ import {
 } from 'lucide-react';
 import { getDocument, TextLayer, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist';
 import { useEffect, useRef, useState, type ReactElement } from 'react';
+import {
+  clearTextLayerElement,
+  resetTextLayerElement,
+  resolveEffectiveSelection,
+} from './pdf-viewer-state.js';
 import { configureLocalPdfWorker } from './pdf-worker-setup.js';
 
 export interface PdfViewerPaneProps {
@@ -184,24 +189,6 @@ function extractSelectionContext(
   };
 }
 
-function resetTextLayerElement(
-  container: HTMLDivElement,
-  width: number,
-  height: number,
-  scale: number,
-): void {
-  Reflect.set(container, 'innerHTML', '');
-  const styleObj: unknown = Reflect.get(container, 'style');
-  if (typeof styleObj === 'object' && styleObj !== null) {
-    Reflect.set(styleObj, 'width', `${Math.floor(width)}px`);
-    Reflect.set(styleObj, 'height', `${Math.floor(height)}px`);
-    const setProperty = Reflect.get(styleObj, 'setProperty');
-    if (typeof setProperty === 'function') {
-      setProperty.call(styleObj, '--scale-factor', String(scale));
-    }
-  }
-}
-
 export function PdfViewerPane({
   state,
   annotations,
@@ -269,6 +256,11 @@ export function PdfViewerPane({
   }, [state.fileId, pdfData]);
 
   useEffect(() => {
+    setLocalSelection(null);
+  }, [state.projectId, state.fileId, state.currentPage]);
+
+  useEffect(() => {
+    clearTextLayerElement(textLayerRef.current);
     if (!loadedDoc || !canvasRef.current) {
       return;
     }
@@ -315,6 +307,7 @@ export function PdfViewerPane({
       cancelled = true;
       activeRenderTask?.cancel();
       activeTextLayer?.cancel();
+      clearTextLayerElement(textLayerRef.current);
     };
   }, [loadedDoc, state.currentPage, state.zoom]);
 
@@ -324,7 +317,7 @@ export function PdfViewerPane({
     onTextSelected?.(context);
   };
 
-  const effectiveSelection = activeSelection ?? localSelection;
+  const effectiveSelection = resolveEffectiveSelection(activeSelection, localSelection, state);
   const pageAnnotations = annotations.filter((item) => item.pageNumber === state.currentPage);
 
   return (

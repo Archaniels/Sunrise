@@ -147,12 +147,17 @@ function mergeNotes(current: string, incoming: string): string {
   return `${current}\n\n${incoming}`.slice(0, 50000);
 }
 
-function normalizeAuthorTuple(author: ReferenceAuthor): string {
-  const family = author.family.trim().toLowerCase();
-  const given = author.given.trim().toLowerCase();
-  const display = author.displayName.trim().toLowerCase();
-  const orcid = (author.orcid ?? '').trim().toLowerCase();
-  return `${family}|${given}|${display}|${orcid}`;
+function normalizeAuthorField(value: string | null): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function isAuthorEqual(left: ReferenceAuthor, right: ReferenceAuthor): boolean {
+  return (
+    normalizeAuthorField(left.family) === normalizeAuthorField(right.family) &&
+    normalizeAuthorField(left.given) === normalizeAuthorField(right.given) &&
+    normalizeAuthorField(left.displayName) === normalizeAuthorField(right.displayName) &&
+    normalizeAuthorField(left.orcid) === normalizeAuthorField(right.orcid)
+  );
 }
 
 function areAuthorsEqual(
@@ -164,7 +169,7 @@ function areAuthorsEqual(
   }
   return existing.every((author, index) => {
     const other = incoming[index];
-    return other !== undefined && normalizeAuthorTuple(author) === normalizeAuthorTuple(other);
+    return other !== undefined && isAuthorEqual(author, other);
   });
 }
 
@@ -508,9 +513,9 @@ function buildInMemoryReferenceMethods(
   };
 }
 
-function restoreMapSnapshot<K, V>(target: Map<K, V>, snapshot: ReadonlyMap<K, V>): void {
+function replaceMapContents<K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>): void {
   target.clear();
-  for (const [key, value] of snapshot.entries()) {
+  for (const [key, value] of source.entries()) {
     target.set(key, value);
   }
 }
@@ -518,10 +523,6 @@ function restoreMapSnapshot<K, V>(target: Map<K, V>, snapshot: ReadonlyMap<K, V>
 export function createInMemoryReferenceRepository(): ReferenceRepository {
   const store = new Map<string, Reference>();
   let txQueue: Promise<void> = Promise.resolve();
-
-  const nestedTx = async <T>(fn: (txRepo: ReferenceRepository) => Promise<T>): Promise<T> =>
-    fn(txScopedRepo);
-  const txScopedRepo: ReferenceRepository = buildInMemoryReferenceMethods(store, nestedTx);
 
   const runInTransaction = async <T>(
     fn: (txRepo: ReferenceRepository) => Promise<T>,
@@ -532,12 +533,14 @@ export function createInMemoryReferenceRepository(): ReferenceRepository {
       release = resolve;
     });
     await previous;
-    const snapshot = new Map(store);
+    const stagedStore = new Map(store);
+    const nestedTx = async <U>(inner: (txRepo: ReferenceRepository) => Promise<U>): Promise<U> =>
+      inner(txScopedRepo);
+    const txScopedRepo: ReferenceRepository = buildInMemoryReferenceMethods(stagedStore, nestedTx);
     try {
-      return await fn(txScopedRepo);
-    } catch (error: unknown) {
-      restoreMapSnapshot(store, snapshot);
-      throw error;
+      const result = await fn(txScopedRepo);
+      replaceMapContents(store, stagedStore);
+      return result;
     } finally {
       release();
     }
@@ -597,18 +600,6 @@ async function verifyOptionalProjectFile(
     return err({ code: 'NOT_FOUND', message: 'PDF file not found in this project' });
   }
   return ok(true);
-}
-
-function createInMemoryOwnershipBinder(): (projectId: string, id: string) => Promise<boolean> {
-  const owners = new Map<string, string>();
-  return async (projectId: string, id: string): Promise<boolean> => {
-    const existingOwner = owners.get(id);
-    if (existingOwner === undefined) {
-      owners.set(id, projectId);
-      return true;
-    }
-    return existingOwner === projectId;
-  };
 }
 
 export function createReferenceService(
@@ -836,18 +827,22 @@ export function createReferenceService(
       });
     },
 
-    runBatch: async <T>(fn: (txService: ReferenceService) => Promise<T>): Promise<T> =>
-      executeInReferenceTransaction(repo, (txRepo) => fn(createReferenceService(txRepo, options))),
+    ...(repo.runInTransaction !== undefined
+      ? {
+          runBatch: async <T>(fn: (txService: ReferenceService) => Promise<T>): Promise<T> =>
+            executeInReferenceTransaction(repo, (txRepo) =>
+              fn(createReferenceService(txRepo, options)),
+            ),
+        }
+      : {}),
   };
 }
 
 export function createInMemoryReferenceService(
   nowOrOptions?: (() => Date) | ReferenceServiceOptions,
 ): ReferenceService {
-  const baseOptions = resolveReferenceServiceOptions(nowOrOptions);
-  const resolvedOptions: ReferenceServiceOptions = {
-    ...baseOptions,
-    assertFileInProject: baseOptions.assertFileInProject ?? createInMemoryOwnershipBinder(),
-  };
-  return createReferenceService(createInMemoryReferenceRepository(), resolvedOptions);
+  return createReferenceService(
+    createInMemoryReferenceRepository(),
+    resolveReferenceServiceOptions(nowOrOptions),
+  );
 }
