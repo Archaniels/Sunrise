@@ -1,6 +1,6 @@
 # Sunrise — Master Implementation Roadmap & Status Report
 
-**Current Stage:** Phase 1 — Complete (Nex Stage 3/4 PASS at `c5c95b8`; ready for Phase 2 Stage 1)  
+**Current Stage:** Phase 2 — Complete (Nex Stage 3/4 PASS at `6fc0534`; ready for Phase 3 Stage 1)  
 **Machine-Readable Tracker:** `docs/status/phases.json`  
 **Architecture Specification:** `docs/architecture/sunrise-architecture.md`
 
@@ -16,10 +16,10 @@
 | **1** | `1.2`     | 3-Column Workspace Shell & Dynamic Artifact Tabs         | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
 | **1** | `1.3`     | S3 File Explorer, Native OS Bridge & Previews            | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
 | **1** | `1.4`     | Quick Open (`Ctrl+P`) & Offline Read-Only Cache/Drafts   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
-| **2** | `2.1`     | Federated Literature Search (OpenAlex/Crossref/PubMed)   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **2** | `2.2`     | Project Bibliography DB & Reference Manager UI           | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **2** | `2.3`     | DOI, BibTeX/RIS & Deterministic PDF Metadata Ingestion   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
-| **2** | `2.4`     | Integrated Academic PDF Viewer (`pdf.js`) & Highlights   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
+| **2** | `2.1`     | Federated Literature Search (OpenAlex/Crossref/PubMed)   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
+| **2** | `2.2`     | Project Bibliography DB & Reference Manager UI           | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
+| **2** | `2.3`     | DOI, BibTeX/RIS & Deterministic PDF Metadata Ingestion   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
+| **2** | `2.4`     | Integrated Academic PDF Viewer (`pdf.js`) & Highlights   | `[x]`             | `[x]`      | `[x]`            | `[x]`         | Done (Verified) |
 | **3** | `3.1`     | TipTap Academic Editor, Comments, Autosave & Snapshots   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
 | **3** | `3.2`     | Inline `@` Search-and-Insert & `[@citekey]` Parsing      | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
 | **3** | `3.3`     | CSL Engine (APA/IEEE/MLA) & Auto-Updating Bibliography   | `[ ]`             | `[ ]`      | `[ ]`            | `[ ]`         | Not Started     |
@@ -49,4 +49,4 @@
 - **Phase 4:** Raven AI Copilot, BYOK Envelope Vault, Explicit Context Pills, Action Buttons, Tiered Approval & Reviewable Diffs.
 - **Phase 5:** Project Knowledge Base (`pgvector` RAG), Hybrid Semantic Search with File/Page Citations & Source Audit Reviewer.
 - **Phase 6:** Isolated Cloud Compute (Docker Jupyter + DuckDB + E2B Interface), Data Grid, Notebooks, Mermaid Diagrams & Unified Figure Artifacts.
-- **Phase 7:** OpenAlex Interactive Literature Map, Cross-Feature E2E Verification, Security/Performance/A11y Audit & Release Packaging.
+- **Phase 7:** OpenAlex Interactive Literature Map, Cross-Feature E2E Verification (Playwright Electron E2E + Bombadil CDP property-based UI exploration, subject to Human Gate allowlist approval), Security/Performance/A11y Audit & Release Packaging.

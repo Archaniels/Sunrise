@@ -20,6 +20,8 @@ import {
   type UserPublic,
 } from '@sunrise/shared';
 import type { z } from 'zod';
+import { createPostgresAuthRepository } from '../db/auth-repository.js';
+import type { TransactionPool } from '../db/transaction.js';
 
 export interface StoredUserRecord {
   readonly id: string;
@@ -45,12 +47,16 @@ export interface AuthRepository {
   readonly createUser: (record: StoredUserRecord) => Promise<StoredUserRecord>;
   readonly saveRefreshToken: (record: StoredRefreshTokenRecord) => Promise<void>;
   readonly findRefreshTokenByHash: (tokenHash: string) => Promise<StoredRefreshTokenRecord | null>;
+  readonly findRefreshTokenByHashForUpdate?: (
+    tokenHash: string,
+  ) => Promise<StoredRefreshTokenRecord | null>;
   readonly revokeRefreshToken: (
     tokenId: string,
     revokedAt: string,
     replacedBy: string | null,
   ) => Promise<void>;
   readonly revokeAllUserRefreshTokens: (userId: string, revokedAt: string) => Promise<void>;
+  readonly runInTransaction?: <T>(fn: (txRepo: AuthRepository) => Promise<T>) => Promise<T>;
 }
 
 export interface AuthServiceOptions {
@@ -179,13 +185,58 @@ async function verifyTypedJwt(
   }
 }
 
+async function executeInAuthTransaction<T>(
+  repo: AuthRepository,
+  fn: (txRepo: AuthRepository) => Promise<T>,
+): Promise<T> {
+  if (repo.runInTransaction) {
+    return repo.runInTransaction(fn);
+  }
+  return fn(repo);
+}
+
+async function rotateRefreshTokenAtomically(
+  txRepo: AuthRepository,
+  tokenHash: string,
+  expectedUserId: string,
+  options: Required<AuthServiceOptions>,
+): Promise<Result<AuthSessionResponse>> {
+  const lookup = txRepo.findRefreshTokenByHashForUpdate ?? txRepo.findRefreshTokenByHash;
+  const stored = await lookup(tokenHash);
+  if (!stored || stored.userId !== expectedUserId) {
+    return err({ code: 'UNAUTHORIZED', message: 'Refresh token is not recognized' });
+  }
+  const nowDate = options.now();
+  const nowIso = nowDate.toISOString();
+  if (stored.revokedAt !== null) {
+    await txRepo.revokeAllUserRefreshTokens(stored.userId, nowIso);
+    return err({ code: 'UNAUTHORIZED', message: 'Refresh token has already been rotated' });
+  }
+  if (Date.parse(stored.expiresAt) <= nowDate.getTime()) {
+    return err({ code: 'UNAUTHORIZED', message: 'Refresh token has expired' });
+  }
+  const user = await txRepo.findUserById(stored.userId);
+  if (!user) {
+    return err({ code: 'UNAUTHORIZED', message: 'Account not found for refresh token' });
+  }
+  const { tokens, refreshRecordId } = await issueSessionTokens(txRepo, user, options);
+  await txRepo.revokeRefreshToken(stored.id, nowIso, refreshRecordId);
+  return ok(AuthSessionResponseSchema.parse({ user: toPublicUser(user), tokens }));
+}
+
 export function createInMemoryAuthRepository(): AuthRepository {
   const usersById = new Map<string, StoredUserRecord>();
   const userIdsByEmail = new Map<string, string>();
   const refreshTokensById = new Map<string, StoredRefreshTokenRecord>();
   const refreshTokenIdsByHash = new Map<string, string>();
+  let txQueue: Promise<void> = Promise.resolve();
 
-  return {
+  const findRefreshByHash = async (tokenHash: string): Promise<StoredRefreshTokenRecord | null> => {
+    const id = refreshTokenIdsByHash.get(tokenHash);
+    return id ? (refreshTokensById.get(id) ?? null) : null;
+  };
+
+  const repo: AuthRepository = {
     findUserByEmail: async (email) => {
       const id = userIdsByEmail.get(email);
       return id ? (usersById.get(id) ?? null) : null;
@@ -200,10 +251,8 @@ export function createInMemoryAuthRepository(): AuthRepository {
       refreshTokensById.set(record.id, record);
       refreshTokenIdsByHash.set(record.tokenHash, record.id);
     },
-    findRefreshTokenByHash: async (tokenHash) => {
-      const id = refreshTokenIdsByHash.get(tokenHash);
-      return id ? (refreshTokensById.get(id) ?? null) : null;
-    },
+    findRefreshTokenByHash: findRefreshByHash,
+    findRefreshTokenByHashForUpdate: findRefreshByHash,
     revokeRefreshToken: async (tokenId, revokedAt, replacedBy) => {
       const existing = refreshTokensById.get(tokenId);
       if (existing) {
@@ -217,7 +266,22 @@ export function createInMemoryAuthRepository(): AuthRepository {
         }
       }
     },
+    runInTransaction: async <T>(fn: (txRepo: AuthRepository) => Promise<T>): Promise<T> => {
+      const previous = txQueue;
+      let releaseLock: () => void = () => undefined;
+      txQueue = new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+      await previous;
+      try {
+        return await fn(repo);
+      } finally {
+        releaseLock();
+      }
+    },
   };
+
+  return repo;
 }
 
 export function createAuthService(
@@ -241,20 +305,22 @@ export function createAuthService(
           message: firstValidationError(parsed.error, 'Invalid signup payload'),
         });
       }
-      const existing = await repo.findUserByEmail(parsed.data.email);
-      if (existing) {
-        return err({ code: 'CONFLICT', message: 'An account with this email already exists' });
-      }
       const passwordHash = await argon2.hash(parsed.data.password, { type: argon2.argon2id });
-      const created = await repo.createUser({
-        id: randomUUID(),
-        email: parsed.data.email,
-        passwordHash,
-        displayName: parsed.data.displayName,
-        createdAt: options.now().toISOString(),
+      return executeInAuthTransaction(repo, async (txRepo) => {
+        const existing = await txRepo.findUserByEmail(parsed.data.email);
+        if (existing) {
+          return err({ code: 'CONFLICT', message: 'An account with this email already exists' });
+        }
+        const created = await txRepo.createUser({
+          id: randomUUID(),
+          email: parsed.data.email,
+          passwordHash,
+          displayName: parsed.data.displayName,
+          createdAt: options.now().toISOString(),
+        });
+        const { tokens } = await issueSessionTokens(txRepo, created, options);
+        return ok(AuthSessionResponseSchema.parse({ user: toPublicUser(created), tokens }));
       });
-      const { tokens } = await issueSessionTokens(repo, created, options);
-      return ok(AuthSessionResponseSchema.parse({ user: toPublicUser(created), tokens }));
     },
 
     login: async (input): Promise<Result<AuthSessionResponse>> => {
@@ -293,25 +359,10 @@ export function createAuthService(
       if (!claims) {
         return err({ code: 'UNAUTHORIZED', message: 'Invalid or expired refresh token' });
       }
-      const stored = await repo.findRefreshTokenByHash(sha256Hex(parsed.data.refreshToken));
-      if (!stored || stored.userId !== claims.sub) {
-        return err({ code: 'UNAUTHORIZED', message: 'Refresh token is not recognized' });
-      }
-      const nowIso = options.now().toISOString();
-      if (stored.revokedAt !== null) {
-        await repo.revokeAllUserRefreshTokens(stored.userId, nowIso);
-        return err({ code: 'UNAUTHORIZED', message: 'Refresh token has already been rotated' });
-      }
-      if (Date.parse(stored.expiresAt) <= options.now().getTime()) {
-        return err({ code: 'UNAUTHORIZED', message: 'Refresh token has expired' });
-      }
-      const user = await repo.findUserById(stored.userId);
-      if (!user) {
-        return err({ code: 'UNAUTHORIZED', message: 'Account not found for refresh token' });
-      }
-      const { tokens, refreshRecordId } = await issueSessionTokens(repo, user, options);
-      await repo.revokeRefreshToken(stored.id, nowIso, refreshRecordId);
-      return ok(AuthSessionResponseSchema.parse({ user: toPublicUser(user), tokens }));
+      const tokenHash = sha256Hex(parsed.data.refreshToken);
+      return executeInAuthTransaction(repo, (txRepo) =>
+        rotateRefreshTokenAtomically(txRepo, tokenHash, claims.sub, options),
+      );
     },
 
     logout: async (input): Promise<Result<{ readonly revoked: true }>> => {
@@ -347,6 +398,13 @@ export function createAuthService(
       return ok(toPublicUser(user));
     },
   };
+}
+
+export function createPostgresAuthService(
+  pool: TransactionPool,
+  options: AuthServiceOptions,
+): AuthService {
+  return createAuthService(createPostgresAuthRepository(pool), options);
 }
 
 export function createInMemoryAuthService(

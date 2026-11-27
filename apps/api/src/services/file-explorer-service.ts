@@ -92,6 +92,23 @@ export interface FileExplorerService {
       readonly limit?: number;
     },
   ) => Promise<Result<ProjectFileNode[]>>;
+  readonly hasFileInProject: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly hasPdfFileInProject: (projectId: string, fileId: string) => Promise<boolean>;
+  readonly readFileBytes: (projectId: string, fileId: string) => Promise<Uint8Array | null>;
+}
+
+const PDF_MAGIC_SIGNATURE = Buffer.from('%PDF-', 'ascii');
+
+function hasPdfMagicSignature(bytes: Buffer | Uint8Array): boolean {
+  if (bytes.length < PDF_MAGIC_SIGNATURE.length) {
+    return false;
+  }
+  for (let index = 0; index < PDF_MAGIC_SIGNATURE.length; index += 1) {
+    if (bytes[index] !== PDF_MAGIC_SIGNATURE[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 const TEXT_PREVIEW_KINDS: ReadonlySet<FileKind> = new Set([
@@ -906,6 +923,35 @@ export function createFileExplorerService(
       );
       matches.sort((a, b) => a.virtualPath.localeCompare(b.virtualPath));
       return ok(matches.slice(0, validated.value.limit));
+    },
+
+    hasFileInProject: async (projectId, fileId): Promise<boolean> => {
+      const node = nodes.get(fileId);
+      return Boolean(node && node.projectId === projectId && node.deletedAt === null);
+    },
+
+    hasPdfFileInProject: async (projectId, fileId): Promise<boolean> => {
+      const node = nodes.get(fileId);
+      if (!node || node.projectId !== projectId || node.deletedAt !== null) {
+        return false;
+      }
+      if (node.isFolder || node.s3Key === null) {
+        return false;
+      }
+      const bytes = await storage.getObject(node.s3Key);
+      return bytes !== null && hasPdfMagicSignature(bytes);
+    },
+
+    readFileBytes: async (projectId, fileId): Promise<Uint8Array | null> => {
+      const node = nodes.get(fileId);
+      if (!node || node.projectId !== projectId || node.deletedAt !== null) {
+        return null;
+      }
+      if (node.isFolder || node.s3Key === null) {
+        return null;
+      }
+      const bytes = await storage.getObject(node.s3Key);
+      return bytes !== null ? new Uint8Array(bytes) : null;
     },
   };
 }

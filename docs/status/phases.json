@@ -1,8 +1,8 @@
 {
   "project": "sunrise",
   "schemaVersion": "1.0.0",
-  "updatedAt": "2026-11-24T16:31:00+07:00",
-  "activePhase": 1,
+  "updatedAt": "2026-11-25T10:16:00+07:00",
+  "activePhase": 2,
   "phases": [
     {
       "id": 0,
@@ -111,45 +111,45 @@
         {
           "id": "2.1",
           "title": "Federated Literature Search & Deduplication Engine",
-          "status": "not_started",
+          "status": "done",
           "stages": {
-            "stage1ContractsTests": "pending",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
-            "stage3Verification": "pending"
+            "stage1ContractsTests": "done",
+            "humanGate": "done",
+            "stage2Implementation": "done",
+            "stage3Verification": "done"
           }
         },
         {
           "id": "2.2",
           "title": "Project Bibliography Database & Reference Manager UI",
-          "status": "not_started",
+          "status": "done",
           "stages": {
-            "stage1ContractsTests": "pending",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
-            "stage3Verification": "pending"
+            "stage1ContractsTests": "done",
+            "humanGate": "done",
+            "stage2Implementation": "done",
+            "stage3Verification": "done"
           }
         },
         {
           "id": "2.3",
           "title": "Multi-Channel Ingestion: DOI, BibTeX/RIS & Deterministic PDF Extraction",
-          "status": "not_started",
+          "status": "done",
           "stages": {
-            "stage1ContractsTests": "pending",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
-            "stage3Verification": "pending"
+            "stage1ContractsTests": "done",
+            "humanGate": "done",
+            "stage2Implementation": "done",
+            "stage3Verification": "done"
           }
         },
         {
           "id": "2.4",
           "title": "Integrated Academic PDF Viewer (pdf.js)",
-          "status": "not_started",
+          "status": "done",
           "stages": {
-            "stage1ContractsTests": "pending",
-            "humanGate": "pending",
-            "stage2Implementation": "pending",
-            "stage3Verification": "pending"
+            "stage1ContractsTests": "done",
+            "humanGate": "done",
+            "stage2Implementation": "done",
+            "stage3Verification": "done"
           }
         }
       ]

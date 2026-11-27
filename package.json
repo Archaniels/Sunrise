@@ -4,16 +4,18 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.0.0",
+    "node": ">=22.13.0",
     "pnpm": ">=10.0.0"
   },
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm -r typecheck",
+    "typecheck:phase2": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:phase0": "vitest run tests/phase0",
     "test:phase1": "vitest run tests/phase1",
-    "test:contracts": "vitest run tests/phase0/governance-and-boundaries.contract.test.ts tests/phase0/shared-contracts.contract.test.ts tests/phase1/phase1-contracts.contract.test.ts",
+    "test:phase2": "vitest run tests/phase2",
+    "test:contracts": "vitest run tests/phase0/governance-and-boundaries.contract.test.ts tests/phase0/shared-contracts.contract.test.ts tests/phase1/phase1-contracts.contract.test.ts tests/phase2/phase2-contracts.contract.test.ts",
     "format:check": "prettier --check .",
     "verify": "pnpm lint && pnpm typecheck && pnpm format:check && pnpm test"
   },
